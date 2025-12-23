@@ -1,0 +1,148 @@
+# ============================================
+# APOLLO Node Resource Forecaster
+# 자원 사용량 예측 엔진 (LSTM/Prophet/ARIMA)
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apollo-forecaster
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/component: prediction
+    app.kubernetes.io/part-of: apollo
+    app.kubernetes.io/managed-by: keti
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: apollo-forecaster
+      app.kubernetes.io/part-of: apollo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: apollo-forecaster
+        app.kubernetes.io/component: prediction
+        app.kubernetes.io/part-of: apollo
+        app.kubernetes.io/managed-by: keti
+    spec:
+      serviceAccountName: apollo-forecaster
+      containers:
+      - name: forecaster
+        image: ketidevit2/apollo-forecaster:latest
+        imagePullPolicy: Always
+        ports:
+        - name: grpc
+          containerPort: 50052
+          protocol: TCP
+        - name: http
+          containerPort: 8081
+          protocol: TCP
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: GRPC_PORT
+          value: "50052"
+        - name: HTTP_PORT
+          value: "8081"
+        - name: MODEL_TYPE
+          value: "lstm"  # lstm, prophet, arima
+        - name: PREDICTION_HORIZON_MINUTES
+          value: "30"
+        - name: HISTORY_WINDOW_MINUTES
+          value: "60"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: model-cache
+          mountPath: /var/lib/apollo/models
+      volumes:
+      - name: model-cache
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apollo-forecaster
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/component: prediction
+    app.kubernetes.io/part-of: apollo
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 50052
+    targetPort: grpc
+    protocol: TCP
+  - name: http
+    port: 8081
+    targetPort: http
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/part-of: apollo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apollo-forecaster
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/part-of: apollo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: apollo-forecaster
+  labels:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/part-of: apollo
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: apollo-forecaster
+  labels:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/part-of: apollo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: apollo-forecaster
+subjects:
+- kind: ServiceAccount
+  name: apollo-forecaster
+  namespace: keti
