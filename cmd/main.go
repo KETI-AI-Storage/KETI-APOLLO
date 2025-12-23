@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"apollo/pkg/client"
-	"apollo/pkg/server"
-	"apollo/pkg/types"
+	pb "apollo/api/proto"
+	grpcserver "apollo/pkg/grpc"
+	"apollo/pkg/monitor"
 )
 
 // Config holds the server configuration
@@ -36,34 +36,45 @@ type Config struct {
 	PolicyCacheTTLMinutes int
 	ForecastModelType     string
 	ForecastHorizonMin    int
+
+	// Monitor settings
+	VerboseLogging bool
 }
 
 // APOLLOServer is the main policy server
 type APOLLOServer struct {
 	config Config
 
-	// Services
-	insightService       *server.InsightService
-	schedulingService    *server.SchedulingPolicyService
-	orchestrationService *server.OrchestrationPolicyService
-	forecastService      *server.ForecastService
+	// gRPC server
+	grpcServer *grpcserver.Server
 
-	// Clients
-	schedulerClient    *client.SchedulerClient
-	orchestratorClient *client.OrchestratorClient
+	// Monitor
+	monitor *monitor.Monitor
 
 	// HTTP server
 	httpServer *http.Server
+
+	// Data stores
+	workloadSignatures map[string]*pb.WorkloadSignature // key: namespace/name
+	clusterInsights    map[string]*pb.ClusterInsight    // key: nodeName
+	dataMu             sync.RWMutex
 
 	// Shutdown
 	shutdownOnce sync.Once
 }
 
+var startTime = time.Now()
+
 func main() {
-	log.Println("============================================")
-	log.Println("APOLLO Policy Server")
-	log.Println("AI Workload Scheduling & Orchestration Policy Engine")
-	log.Println("============================================")
+	log.Println("╔═══════════════════════════════════════════════════════════════╗")
+	log.Println("║          APOLLO Policy Server v1.0.0                          ║")
+	log.Println("║   Adaptive Policy Optimization for Low-Latency I/O            ║")
+	log.Println("╠═══════════════════════════════════════════════════════════════╣")
+	log.Println("║   Modules:                                                    ║")
+	log.Println("║   - Node Resource Forecaster                                  ║")
+	log.Println("║   - Scheduling Policy Engine                                  ║")
+	log.Println("║   - Orchestration Policy Engine                               ║")
+	log.Println("╚═══════════════════════════════════════════════════════════════╝")
 
 	// Load configuration
 	config := loadConfig()
@@ -78,16 +89,49 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start server
+	// Start gRPC server in goroutine
 	go func() {
-		if err := srv.Start(ctx); err != nil {
-			log.Fatalf("Server failed: %v", err)
+		if err := srv.grpcServer.Start(); err != nil {
+			log.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 
+	// Start HTTP server in goroutine
+	go func() {
+		if err := srv.StartHTTP(ctx); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP server failed: %v", err)
+		}
+	}()
+
+	// Print monitor summary every 30 seconds
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				srv.monitor.PrintSummary()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	log.Println("")
+	log.Println("============================================")
+	log.Printf("APOLLO Server is ready!")
+	log.Printf("  gRPC: localhost:%d", config.GRPCPort)
+	log.Printf("  HTTP: localhost:%d", config.HTTPPort)
+	log.Println("============================================")
+	log.Println("")
+
 	// Wait for shutdown signal
 	<-sigCh
+	log.Println("")
 	log.Println("Shutdown signal received, stopping server...")
+
+	// Print final summary
+	srv.monitor.PrintSummary()
 
 	// Graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -105,72 +149,260 @@ func loadConfig() Config {
 	config := Config{
 		GRPCPort:              getEnvInt("GRPC_PORT", 50051),
 		HTTPPort:              getEnvInt("HTTP_PORT", 8080),
-		SchedulerEndpoint:     getEnv("SCHEDULER_ENDPOINT", "http://ai-storage-scheduler:50053"),
-		OrchestratorEndpoint:  getEnv("ORCHESTRATOR_ENDPOINT", "http://ai-storage-orchestrator:8080"),
+		SchedulerEndpoint:     getEnv("SCHEDULER_ENDPOINT", "ai-storage-scheduler:50053"),
+		OrchestratorEndpoint:  getEnv("ORCHESTRATOR_ENDPOINT", "ai-storage-orchestrator:8080"),
 		PolicyCacheTTLMinutes: getEnvInt("POLICY_CACHE_TTL_MINUTES", 5),
 		ForecastModelType:     getEnv("FORECAST_MODEL_TYPE", "simple"),
 		ForecastHorizonMin:    getEnvInt("FORECAST_HORIZON_MIN", 30),
+		VerboseLogging:        getEnv("VERBOSE", "false") == "true",
 	}
 
-	log.Printf("Configuration loaded:")
-	log.Printf("  GRPC Port: %d", config.GRPCPort)
-	log.Printf("  HTTP Port: %d", config.HTTPPort)
-	log.Printf("  Scheduler Endpoint: %s", config.SchedulerEndpoint)
+	log.Println("Configuration:")
+	log.Printf("  gRPC Port:             %d", config.GRPCPort)
+	log.Printf("  HTTP Port:             %d", config.HTTPPort)
+	log.Printf("  Scheduler Endpoint:    %s", config.SchedulerEndpoint)
 	log.Printf("  Orchestrator Endpoint: %s", config.OrchestratorEndpoint)
-	log.Printf("  Forecast Model: %s", config.ForecastModelType)
+	log.Printf("  Verbose Logging:       %v", config.VerboseLogging)
+	log.Println("")
 
 	return config
 }
 
 // NewAPOLLOServer creates a new APOLLO server instance
 func NewAPOLLOServer(config Config) *APOLLOServer {
-	// Create services
-	forecastService := server.NewForecastService()
-	forecastService.SetConfig(server.ForecastConfig{
-		ModelType:             config.ForecastModelType,
-		HistoryWindowMinutes:  60,
-		PredictionHorizonMin:  config.ForecastHorizonMin,
-		UpdateIntervalSeconds: 60,
-		OverloadThreshold:     80.0,
-		MinDataPoints:         10,
-	})
+	// Create monitor
+	mon := monitor.NewMonitor(config.VerboseLogging)
 
-	insightService := server.NewInsightService()
-	schedulingService := server.NewSchedulingPolicyService(insightService)
-	orchestrationService := server.NewOrchestrationPolicyService(insightService, forecastService)
+	// Create gRPC server
+	grpcSrv := grpcserver.NewServer(config.GRPCPort, mon)
 
-	// Create clients
-	schedulerClient := client.NewSchedulerClient(client.SchedulerClientConfig{
-		Endpoint:   config.SchedulerEndpoint,
-		TimeoutSec: 10,
-		MaxRetries: 3,
-	})
+	srv := &APOLLOServer{
+		config:             config,
+		grpcServer:         grpcSrv,
+		monitor:            mon,
+		workloadSignatures: make(map[string]*pb.WorkloadSignature),
+		clusterInsights:    make(map[string]*pb.ClusterInsight),
+	}
 
-	orchestratorClient := client.NewOrchestratorClient(client.OrchestratorClientConfig{
-		Endpoint:   config.OrchestratorEndpoint,
-		TimeoutSec: 30,
-		MaxRetries: 3,
-	})
+	// Set up gRPC handlers
+	grpcSrv.SetWorkloadSignatureHandler(srv.handleWorkloadSignature)
+	grpcSrv.SetClusterInsightHandler(srv.handleClusterInsight)
+	grpcSrv.SetSchedulingPolicyProvider(srv.getSchedulingPolicy)
+	grpcSrv.SetOrchestrationPolicyProvider(srv.getOrchestrationPolicy)
 
-	return &APOLLOServer{
-		config:               config,
-		insightService:       insightService,
-		schedulingService:    schedulingService,
-		orchestrationService: orchestrationService,
-		forecastService:      forecastService,
-		schedulerClient:      schedulerClient,
-		orchestratorClient:   orchestratorClient,
+	return srv
+}
+
+// handleWorkloadSignature processes received workload signature
+func (s *APOLLOServer) handleWorkloadSignature(sig *pb.WorkloadSignature) {
+	key := fmt.Sprintf("%s/%s", sig.PodNamespace, sig.PodName)
+
+	s.dataMu.Lock()
+	s.workloadSignatures[key] = sig
+	s.dataMu.Unlock()
+
+	log.Printf("[Handler] Stored WorkloadSignature: %s (type: %s, stage: %s)",
+		key, sig.WorkloadType.String(), sig.CurrentStage.String())
+}
+
+// handleClusterInsight processes received cluster insight
+func (s *APOLLOServer) handleClusterInsight(insight *pb.ClusterInsight) {
+	s.dataMu.Lock()
+	s.clusterInsights[insight.NodeName] = insight
+	s.dataMu.Unlock()
+
+	log.Printf("[Handler] Stored ClusterInsight: %s (devices: storage=%d, gpu=%d, csd=%d)",
+		insight.NodeName, len(insight.StorageDevices), len(insight.GpuDevices), len(insight.CsdDevices))
+}
+
+// getSchedulingPolicy returns scheduling policy for a pod
+func (s *APOLLOServer) getSchedulingPolicy(podName, podNamespace string) *pb.SchedulingPolicy {
+	key := fmt.Sprintf("%s/%s", podNamespace, podName)
+
+	s.dataMu.RLock()
+	sig, exists := s.workloadSignatures[key]
+	s.dataMu.RUnlock()
+
+	policy := &pb.SchedulingPolicy{
+		RequestId:    fmt.Sprintf("sp-%s-%d", key, time.Now().Unix()),
+		PodName:      podName,
+		PodNamespace: podNamespace,
+		Decision:     pb.SchedulingDecision_SCHEDULING_DECISION_ALLOW,
+	}
+
+	if !exists {
+		policy.Reason = "No workload signature found, using default policy"
+		return policy
+	}
+
+	// Generate policy based on workload signature
+	policy.NodePreferences = s.calculateNodePreferences(sig)
+	policy.Reason = fmt.Sprintf("Policy based on %s workload, %s stage", sig.WorkloadType.String(), sig.CurrentStage.String())
+
+	// Set storage requirements if GPU workload
+	if sig.IsGpuWorkload {
+		policy.StorageRequirements = &pb.StorageRequirements{
+			StorageClass: pb.StorageClass_STORAGE_CLASS_ULTRA_FAST,
+			RequiresCsd:  true,
+		}
+	}
+
+	return policy
+}
+
+// calculateNodePreferences calculates node preferences based on workload and cluster state
+func (s *APOLLOServer) calculateNodePreferences(sig *pb.WorkloadSignature) []*pb.NodePreference {
+	var preferences []*pb.NodePreference
+
+	s.dataMu.RLock()
+	defer s.dataMu.RUnlock()
+
+	for nodeName, insight := range s.clusterInsights {
+		score := int32(50) // Base score
+		reason := "base score"
+
+		// Prefer nodes with available resources
+		if insight.NodeResources != nil {
+			cpuAvail := insight.NodeResources.CpuAvailableCores
+			if cpuAvail > 4 {
+				score += 20
+				reason = "high CPU availability"
+			}
+		}
+
+		// GPU workloads prefer nodes with GPUs
+		if sig.IsGpuWorkload && len(insight.GpuDevices) > 0 {
+			score += 30
+			reason = "GPU available"
+		}
+
+		// CSD preference for I/O heavy workloads
+		if sig.IoPattern == pb.IOPattern_IO_PATTERN_READ_HEAVY || sig.IoPattern == pb.IOPattern_IO_PATTERN_WRITE_HEAVY {
+			if len(insight.CsdDevices) > 0 {
+				score += 20
+				reason = "CSD available for I/O workload"
+			}
+		}
+
+		preferences = append(preferences, &pb.NodePreference{
+			NodeName: nodeName,
+			Score:    score,
+			Reason:   reason,
+		})
+	}
+
+	return preferences
+}
+
+// getOrchestrationPolicy returns orchestration policy for a pod
+func (s *APOLLOServer) getOrchestrationPolicy(podName, podNamespace string) *pb.OrchestrationPolicy {
+	key := fmt.Sprintf("%s/%s", podNamespace, podName)
+
+	s.dataMu.RLock()
+	sig, exists := s.workloadSignatures[key]
+	s.dataMu.RUnlock()
+
+	policy := &pb.OrchestrationPolicy{
+		RequestId: fmt.Sprintf("op-%s-%d", key, time.Now().Unix()),
+		Action:    pb.OrchestrationAction_ORCHESTRATION_ACTION_UNSPECIFIED,
+		Priority:  pb.PolicyPriority_POLICY_PRIORITY_MEDIUM,
+	}
+
+	if !exists {
+		policy.Reason = "No workload signature found"
+		return policy
+	}
+
+	// Check if migration is needed based on node resource state
+	if sig.NodeName != "" {
+		s.dataMu.RLock()
+		insight, hasInsight := s.clusterInsights[sig.NodeName]
+		s.dataMu.RUnlock()
+
+		if hasInsight && insight.NodeResources != nil {
+			// Check for resource pressure
+			var cpuUsage, memUsage float64
+			if insight.NodeResources.CpuAllocatableCores > 0 {
+				cpuUsage = insight.NodeResources.CpuUsedCores / insight.NodeResources.CpuAllocatableCores * 100
+			}
+			if insight.NodeResources.MemoryAllocatableBytes > 0 {
+				memUsage = float64(insight.NodeResources.MemoryUsedBytes) / float64(insight.NodeResources.MemoryAllocatableBytes) * 100
+			}
+
+			if cpuUsage > 90 || memUsage > 90 {
+				policy.Action = pb.OrchestrationAction_ORCHESTRATION_ACTION_MIGRATE
+				policy.Priority = pb.PolicyPriority_POLICY_PRIORITY_HIGH
+				policy.Reason = fmt.Sprintf("Node resource pressure: CPU=%.1f%%, Memory=%.1f%%", cpuUsage, memUsage)
+
+				// Find target node
+				if target := s.findMigrationTarget(sig); target != nil {
+					policy.Target = &pb.OrchestrationPolicy_Migration{Migration: target}
+				}
+			}
+		}
+	}
+
+	return policy
+}
+
+// findMigrationTarget finds the best node for migration
+func (s *APOLLOServer) findMigrationTarget(sig *pb.WorkloadSignature) *pb.MigrationTarget {
+	s.dataMu.RLock()
+	defer s.dataMu.RUnlock()
+
+	var bestNode string
+	var bestScore float64
+
+	for nodeName, insight := range s.clusterInsights {
+		if nodeName == sig.NodeName {
+			continue // Skip current node
+		}
+
+		if insight.NodeResources == nil {
+			continue
+		}
+
+		// Calculate score based on available resources
+		score := insight.NodeResources.CpuAvailableCores * 10
+		score += float64(insight.NodeResources.MemoryAvailableBytes) / (1024 * 1024 * 1024) // GB
+
+		if score > bestScore {
+			bestScore = score
+			bestNode = nodeName
+		}
+	}
+
+	if bestNode == "" {
+		return nil
+	}
+
+	return &pb.MigrationTarget{
+		PodName:        sig.PodName,
+		PodNamespace:   sig.PodNamespace,
+		SourceNode:     sig.NodeName,
+		TargetNode:     bestNode,
+		PreservePv:     true,
+		TimeoutSeconds: 600,
 	}
 }
 
-// Start starts the APOLLO server
-func (s *APOLLOServer) Start(ctx context.Context) error {
-	// Setup insight callbacks
-	s.setupCallbacks()
-
-	// Start HTTP server
+// StartHTTP starts the HTTP server
+func (s *APOLLOServer) StartHTTP(ctx context.Context) error {
 	mux := http.NewServeMux()
-	s.registerHTTPHandlers(mux)
+
+	// Health endpoints
+	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/ready", s.handleReady)
+
+	// Status and monitoring
+	mux.HandleFunc("/api/v1/status", s.handleStatus)
+	mux.HandleFunc("/api/v1/monitor", s.handleMonitor)
+	mux.HandleFunc("/api/v1/monitor/workloads", s.handleMonitorWorkloads)
+	mux.HandleFunc("/api/v1/monitor/insights", s.handleMonitorInsights)
+
+	// Data endpoints (for debugging)
+	mux.HandleFunc("/api/v1/data/workloads", s.handleDataWorkloads)
+	mux.HandleFunc("/api/v1/data/insights", s.handleDataInsights)
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.config.HTTPPort),
@@ -178,344 +410,78 @@ func (s *APOLLOServer) Start(ctx context.Context) error {
 	}
 
 	log.Printf("Starting HTTP server on port %d", s.config.HTTPPort)
-
-	// Try to connect to external services (non-blocking)
-	go s.connectToExternalServices(ctx)
-
-	// Start HTTP server
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("HTTP server error: %w", err)
-	}
-
-	return nil
+	return s.httpServer.ListenAndServe()
 }
 
-// setupCallbacks sets up callbacks for insight events
-func (s *APOLLOServer) setupCallbacks() {
-	// When new workload signature is received
-	s.insightService.SetWorkloadSignatureCallback(func(sig *types.WorkloadSignature) {
-		log.Printf("[Callback] New workload signature for %s/%s", sig.PodNamespace, sig.PodName)
-
-		// Record metrics for forecast service
-		if insight := s.insightService.GetClusterInsight(sig.NodeName); insight != nil {
-			ctx := context.Background()
-			s.forecastService.RecordMetrics(ctx, sig.NodeName, insight)
-		}
-	})
-
-	// When new cluster insight is received
-	s.insightService.SetClusterInsightCallback(func(insight *types.ClusterInsight) {
-		log.Printf("[Callback] New cluster insight from node %s", insight.NodeName)
-
-		// Record metrics for forecast
-		ctx := context.Background()
-		s.forecastService.RecordMetrics(ctx, insight.NodeName, insight)
-	})
-}
-
-// connectToExternalServices attempts to connect to scheduler and orchestrator
-func (s *APOLLOServer) connectToExternalServices(ctx context.Context) {
-	// Retry connection with backoff
-	for i := 0; i < 5; i++ {
-		if err := s.schedulerClient.Connect(ctx); err != nil {
-			log.Printf("Failed to connect to scheduler (attempt %d): %v", i+1, err)
-		} else {
-			break
-		}
-		time.Sleep(time.Duration(i+1) * 5 * time.Second)
-	}
-
-	for i := 0; i < 5; i++ {
-		if err := s.orchestratorClient.Connect(ctx); err != nil {
-			log.Printf("Failed to connect to orchestrator (attempt %d): %v", i+1, err)
-		} else {
-			break
-		}
-		time.Sleep(time.Duration(i+1) * 5 * time.Second)
-	}
-}
-
-// registerHTTPHandlers registers HTTP API handlers
-func (s *APOLLOServer) registerHTTPHandlers(mux *http.ServeMux) {
-	// Health endpoints
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/ready", s.handleReady)
-
-	// Insight API - receive data from Insight Trace/Scope
-	mux.HandleFunc("/api/v1/insights/workload", s.handleWorkloadSignature)
-	mux.HandleFunc("/api/v1/insights/cluster", s.handleClusterInsight)
-
-	// Policy API - provide policies to Scheduler/Orchestrator
-	mux.HandleFunc("/api/v1/policies/scheduling", s.handleSchedulingPolicy)
-	mux.HandleFunc("/api/v1/policies/orchestration", s.handleOrchestrationPolicy)
-
-	// Forecast API
-	mux.HandleFunc("/api/v1/forecast/", s.handleForecast)
-
-	// Status and metrics
-	mux.HandleFunc("/api/v1/status", s.handleStatus)
-	mux.HandleFunc("/api/v1/stats", s.handleStats)
-}
-
-// handleHealth handles health check
+// HTTP Handlers
 func (s *APOLLOServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }
 
-// handleReady handles readiness check
 func (s *APOLLOServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 }
 
-// handleWorkloadSignature handles incoming workload signatures from Insight Trace
-func (s *APOLLOServer) handleWorkloadSignature(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var sig types.WorkloadSignature
-	if err := json.NewDecoder(r.Body).Decode(&sig); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	ctx := r.Context()
-	if err := s.insightService.ReceiveWorkloadSignature(ctx, &sig); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to process signature: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "accepted",
-		"message": fmt.Sprintf("workload signature for %s/%s received", sig.PodNamespace, sig.PodName),
-	})
-}
-
-// handleClusterInsight handles incoming cluster insights from Insight Scope
-func (s *APOLLOServer) handleClusterInsight(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var insight types.ClusterInsight
-	if err := json.NewDecoder(r.Body).Decode(&insight); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	ctx := r.Context()
-	if err := s.insightService.ReceiveClusterInsight(ctx, &insight); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to process insight: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "accepted",
-		"message": fmt.Sprintf("cluster insight from %s received", insight.NodeName),
-	})
-}
-
-// handleSchedulingPolicy handles scheduling policy requests from Scheduler
-func (s *APOLLOServer) handleSchedulingPolicy(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		// Get policy for a pod
-		podNamespace := r.URL.Query().Get("namespace")
-		podName := r.URL.Query().Get("name")
-
-		if podNamespace == "" || podName == "" {
-			http.Error(w, "Missing namespace or name parameter", http.StatusBadRequest)
-			return
-		}
-
-		ctx := r.Context()
-		req := &server.SchedulingPolicyRequest{
-			PodName:      podName,
-			PodNamespace: podNamespace,
-		}
-
-		policy, err := s.schedulingService.GetSchedulingPolicy(ctx, req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get policy: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(policy)
-		return
-	}
-
-	if r.Method == http.MethodPost {
-		// Report scheduling result
-		var result server.SchedulingResult
-		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
-			http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		ctx := r.Context()
-		resp, err := s.schedulingService.ReportSchedulingResult(ctx, &result)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to report result: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
-	}
-
-	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-}
-
-// handleOrchestrationPolicy handles orchestration policy requests from Orchestrator
-func (s *APOLLOServer) handleOrchestrationPolicy(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		// Get policy for a pod
-		podNamespace := r.URL.Query().Get("namespace")
-		podName := r.URL.Query().Get("name")
-		currentNode := r.URL.Query().Get("node")
-
-		if podNamespace == "" || podName == "" {
-			http.Error(w, "Missing namespace or name parameter", http.StatusBadRequest)
-			return
-		}
-
-		ctx := r.Context()
-		req := &server.OrchestrationPolicyRequest{
-			PodName:      podName,
-			PodNamespace: podNamespace,
-			CurrentNode:  currentNode,
-		}
-
-		policy, err := s.orchestrationService.GetOrchestrationPolicy(ctx, req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get policy: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(policy)
-		return
-	}
-
-	if r.Method == http.MethodPost {
-		// Update migration status
-		var update server.MigrationStatusUpdate
-		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-			http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		ctx := r.Context()
-		resp, err := s.orchestrationService.UpdateMigrationStatus(ctx, &update)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to update status: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
-	}
-
-	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-}
-
-// handleForecast handles forecast requests
-func (s *APOLLOServer) handleForecast(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	nodeName := r.URL.Query().Get("node")
-
-	if nodeName == "" {
-		// Return all predictions
-		ctx := r.Context()
-		predictions := s.forecastService.GenerateAllPredictions(ctx)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(predictions)
-		return
-	}
-
-	// Return specific node prediction
-	ctx := r.Context()
-	prediction, err := s.forecastService.GeneratePrediction(ctx, nodeName)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to generate prediction: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(prediction)
-}
-
-// handleStatus handles status requests
 func (s *APOLLOServer) handleStatus(w http.ResponseWriter, r *http.Request) {
+	s.dataMu.RLock()
+	workloadCount := len(s.workloadSignatures)
+	insightCount := len(s.clusterInsights)
+	s.dataMu.RUnlock()
+
 	status := map[string]interface{}{
-		"server": "apollo-policy-server",
+		"server":  "APOLLO Policy Server",
 		"version": "1.0.0",
-		"uptime": time.Since(startTime).String(),
-		"services": map[string]interface{}{
-			"insight": map[string]interface{}{
-				"workload_signatures": s.insightService.GetWorkloadSignatureCount(),
-				"cluster_insights":    s.insightService.GetClusterInsightCount(),
-			},
-			"scheduling": map[string]interface{}{
-				"stats": s.schedulingService.GetStats(),
-			},
-			"orchestration": map[string]interface{}{
-				"stats":             s.orchestrationService.GetStats(),
-				"active_migrations": len(s.orchestrationService.GetActiveMigrations()),
-			},
-			"forecast": map[string]interface{}{
-				"stats": s.forecastService.GetStats(),
-			},
+		"uptime":  time.Since(startTime).String(),
+		"data": map[string]int{
+			"workload_signatures": workloadCount,
+			"cluster_insights":    insightCount,
 		},
-		"clients": map[string]interface{}{
-			"scheduler_connected":    s.schedulerClient.IsConnected(),
-			"orchestrator_connected": s.orchestratorClient.IsConnected(),
-		},
+		"monitor": s.monitor.GetStats(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }
 
-// handleStats handles stats requests
-func (s *APOLLOServer) handleStats(w http.ResponseWriter, r *http.Request) {
-	stats := map[string]interface{}{
-		"insight":       s.insightService.GetStats(),
-		"scheduling":    s.schedulingService.GetStats(),
-		"orchestration": s.orchestrationService.GetStats(),
-		"forecast":      s.forecastService.GetStats(),
-		"scheduler_client":    s.schedulerClient.GetStats(),
-		"orchestrator_client": s.orchestratorClient.GetStats(),
-	}
+func (s *APOLLOServer) handleMonitor(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.monitor.GetStats())
+}
+
+func (s *APOLLOServer) handleMonitorWorkloads(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.monitor.GetRecentWorkloads())
+}
+
+func (s *APOLLOServer) handleMonitorInsights(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.monitor.GetRecentInsights())
+}
+
+func (s *APOLLOServer) handleDataWorkloads(w http.ResponseWriter, r *http.Request) {
+	s.dataMu.RLock()
+	defer s.dataMu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	json.NewEncoder(w).Encode(s.workloadSignatures)
+}
+
+func (s *APOLLOServer) handleDataInsights(w http.ResponseWriter, r *http.Request) {
+	s.dataMu.RLock()
+	defer s.dataMu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.clusterInsights)
 }
 
 // Shutdown gracefully shuts down the server
 func (s *APOLLOServer) Shutdown(ctx context.Context) error {
 	var shutdownErr error
 	s.shutdownOnce.Do(func() {
-		// Close clients
-		s.schedulerClient.Close()
-		s.orchestratorClient.Close()
+		// Stop gRPC server
+		s.grpcServer.Stop()
 
 		// Shutdown HTTP server
 		if s.httpServer != nil {
@@ -544,5 +510,3 @@ func getEnvInt(key string, defaultValue int) int {
 	}
 	return defaultValue
 }
-
-var startTime = time.Now()
