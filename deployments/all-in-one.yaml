@@ -1,0 +1,318 @@
+# ============================================
+# APOLLO - All-in-One Deployment
+# Adaptive Policy Optimization for Low-Latency I/O
+# KETI AI Storage System
+# ============================================
+#
+# 설치: kubectl apply -f all-in-one.yaml
+# 삭제: kubectl delete -f all-in-one.yaml
+# 확인: kubectl get all -n keti -l app.kubernetes.io/part-of=apollo
+#
+# ============================================
+
+# --------------------------------------------
+# 1. Policy Server (Scheduling + Orchestration)
+# --------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apollo-policy-server
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo-policy-server
+    app.kubernetes.io/component: policy
+    app.kubernetes.io/part-of: apollo
+    app.kubernetes.io/managed-by: keti
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: apollo-policy-server
+      app.kubernetes.io/part-of: apollo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: apollo-policy-server
+        app.kubernetes.io/component: policy
+        app.kubernetes.io/part-of: apollo
+        app.kubernetes.io/managed-by: keti
+    spec:
+      serviceAccountName: apollo
+      containers:
+      - name: policy-server
+        image: ketidevit2/apollo-policy-server:latest
+        imagePullPolicy: Always
+        ports:
+        - name: grpc
+          containerPort: 50051
+        - name: http
+          containerPort: 8080
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: GRPC_PORT
+          value: "50051"
+        - name: HTTP_PORT
+          value: "8080"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apollo-policy-server
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo-policy-server
+    app.kubernetes.io/part-of: apollo
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: grpc
+  - name: http
+    port: 8080
+    targetPort: http
+  selector:
+    app.kubernetes.io/name: apollo-policy-server
+    app.kubernetes.io/part-of: apollo
+
+---
+# --------------------------------------------
+# 2. Forecaster (Node Resource Prediction)
+# --------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apollo-forecaster
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/component: prediction
+    app.kubernetes.io/part-of: apollo
+    app.kubernetes.io/managed-by: keti
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: apollo-forecaster
+      app.kubernetes.io/part-of: apollo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: apollo-forecaster
+        app.kubernetes.io/component: prediction
+        app.kubernetes.io/part-of: apollo
+        app.kubernetes.io/managed-by: keti
+    spec:
+      serviceAccountName: apollo
+      containers:
+      - name: forecaster
+        image: ketidevit2/apollo-forecaster:latest
+        imagePullPolicy: Always
+        ports:
+        - name: grpc
+          containerPort: 50052
+        - name: http
+          containerPort: 8081
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: MODEL_TYPE
+          value: "lstm"
+        - name: PREDICTION_HORIZON_MINUTES
+          value: "30"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apollo-forecaster
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/part-of: apollo
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 50052
+    targetPort: grpc
+  - name: http
+    port: 8081
+    targetPort: http
+  selector:
+    app.kubernetes.io/name: apollo-forecaster
+    app.kubernetes.io/part-of: apollo
+
+---
+# --------------------------------------------
+# 3. Insight Scope (Node Monitoring DaemonSet)
+# --------------------------------------------
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: insight-scope
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: apollo
+    app.kubernetes.io/managed-by: keti
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: insight-scope
+      app.kubernetes.io/part-of: apollo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: insight-scope
+        app.kubernetes.io/component: monitoring
+        app.kubernetes.io/part-of: apollo
+        app.kubernetes.io/managed-by: keti
+    spec:
+      serviceAccountName: apollo
+      hostPID: true
+      tolerations:
+      - operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: insight-scope
+        image: ketidevit2/insight-scope:latest
+        imagePullPolicy: Always
+        ports:
+        - name: grpc
+          containerPort: 50054
+        - name: http
+          containerPort: 9092
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: APOLLO_ENDPOINT
+          value: "apollo-policy-server.keti.svc.cluster.local:50051"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insight-scope
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/part-of: apollo
+spec:
+  clusterIP: None
+  ports:
+  - name: grpc
+    port: 50054
+  - name: http
+    port: 9092
+  selector:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/part-of: apollo
+
+---
+# --------------------------------------------
+# 4. RBAC (ServiceAccount, ClusterRole, Binding)
+# --------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apollo
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: apollo
+    app.kubernetes.io/part-of: apollo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: apollo
+  labels:
+    app.kubernetes.io/name: apollo
+    app.kubernetes.io/part-of: apollo
+rules:
+# Pod/Node 조회
+- apiGroups: [""]
+  resources: ["pods", "nodes", "namespaces", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/status", "nodes/status", "nodes/proxy"]
+  verbs: ["get"]
+# Metrics API
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+# Argo Workflows
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows"]
+  verbs: ["get", "list", "watch"]
+# Storage
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: apollo
+  labels:
+    app.kubernetes.io/name: apollo
+    app.kubernetes.io/part-of: apollo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: apollo
+subjects:
+- kind: ServiceAccount
+  name: apollo
+  namespace: keti

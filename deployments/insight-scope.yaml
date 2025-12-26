@@ -1,0 +1,174 @@
+# ============================================
+# APOLLO Insight Scope
+# 노드별 클러스터 인사이트 수집 (DaemonSet)
+# ============================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: insight-scope
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: apollo
+    app.kubernetes.io/managed-by: keti
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: insight-scope
+      app.kubernetes.io/part-of: apollo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: insight-scope
+        app.kubernetes.io/component: monitoring
+        app.kubernetes.io/part-of: apollo
+        app.kubernetes.io/managed-by: keti
+    spec:
+      serviceAccountName: insight-scope
+      hostPID: true
+      hostNetwork: false
+      tolerations:
+      - operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: insight-scope
+        image: ketidevit2/insight-scope:latest
+        imagePullPolicy: Always
+        ports:
+        - name: grpc
+          containerPort: 50054
+          protocol: TCP
+        - name: http
+          containerPort: 9092
+          protocol: TCP
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: GRPC_PORT
+          value: "50054"
+        - name: HTTP_PORT
+          value: "9092"
+        - name: APOLLO_POLICY_SERVER
+          value: "apollo-policy-server.keti.svc.cluster.local:50051"
+        - name: COLLECTION_INTERVAL
+          value: "10s"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: dev
+          mountPath: /host/dev
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+      - name: dev
+        hostPath:
+          path: /dev
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insight-scope
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: apollo
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for DaemonSet
+  ports:
+  - name: grpc
+    port: 50054
+    targetPort: grpc
+    protocol: TCP
+  - name: http
+    port: 9092
+    targetPort: http
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/part-of: apollo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: insight-scope
+  namespace: keti
+  labels:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/part-of: apollo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: insight-scope
+  labels:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/part-of: apollo
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes/proxy", "nodes/stats"]
+  verbs: ["get"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: insight-scope
+  labels:
+    app.kubernetes.io/name: insight-scope
+    app.kubernetes.io/part-of: apollo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: insight-scope
+subjects:
+- kind: ServiceAccount
+  name: insight-scope
+  namespace: keti
