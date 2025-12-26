@@ -472,9 +472,11 @@ type WorkloadSignature struct {
 	Framework        string `protobuf:"bytes,10,opt,name=framework,proto3" json:"framework,omitempty"` // tensorflow, pytorch, etc.
 	FrameworkVersion string `protobuf:"bytes,11,opt,name=framework_version,json=frameworkVersion,proto3" json:"framework_version,omitempty"`
 	// Resource profile
-	IsGpuWorkload      bool  `protobuf:"varint,12,opt,name=is_gpu_workload,json=isGpuWorkload,proto3" json:"is_gpu_workload,omitempty"`
-	IsDistributed      bool  `protobuf:"varint,13,opt,name=is_distributed,json=isDistributed,proto3" json:"is_distributed,omitempty"`
-	EstimatedBatchSize int32 `protobuf:"varint,14,opt,name=estimated_batch_size,json=estimatedBatchSize,proto3" json:"estimated_batch_size,omitempty"`
+	IsGpuWorkload      bool   `protobuf:"varint,12,opt,name=is_gpu_workload,json=isGpuWorkload,proto3" json:"is_gpu_workload,omitempty"`
+	IsDistributed      bool   `protobuf:"varint,13,opt,name=is_distributed,json=isDistributed,proto3" json:"is_distributed,omitempty"`
+	EstimatedBatchSize int32  `protobuf:"varint,14,opt,name=estimated_batch_size,json=estimatedBatchSize,proto3" json:"estimated_batch_size,omitempty"`
+	IsPipeline         bool   `protobuf:"varint,21,opt,name=is_pipeline,json=isPipeline,proto3" json:"is_pipeline,omitempty"`      // Whether this is a pipeline/DAG workload
+	PipelineStep       string `protobuf:"bytes,22,opt,name=pipeline_step,json=pipelineStep,proto3" json:"pipeline_step,omitempty"` // Current step: preprocess, train, evaluate
 	// Current metrics
 	CurrentMetrics *ResourceMetrics `protobuf:"bytes,15,opt,name=current_metrics,json=currentMetrics,proto3" json:"current_metrics,omitempty"`
 	// Storage recommendations (from Insight Trace analysis)
@@ -615,6 +617,20 @@ func (x *WorkloadSignature) GetEstimatedBatchSize() int32 {
 		return x.EstimatedBatchSize
 	}
 	return 0
+}
+
+func (x *WorkloadSignature) GetIsPipeline() bool {
+	if x != nil {
+		return x.IsPipeline
+	}
+	return false
+}
+
+func (x *WorkloadSignature) GetPipelineStep() string {
+	if x != nil {
+		return x.PipelineStep
+	}
+	return ""
 }
 
 func (x *WorkloadSignature) GetCurrentMetrics() *ResourceMetrics {
@@ -4042,7 +4058,7 @@ var File_apollo_proto protoreflect.FileDescriptor
 
 const file_apollo_proto_rawDesc = "" +
 	"\n" +
-	"\fapollo.proto\x12\x06apollo\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc4\a\n" +
+	"\fapollo.proto\x12\x06apollo\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\b\n" +
 	"\x11WorkloadSignature\x12\x19\n" +
 	"\bpod_name\x18\x01 \x01(\tR\apodName\x12#\n" +
 	"\rpod_namespace\x18\x02 \x01(\tR\fpodNamespace\x12\x17\n" +
@@ -4061,7 +4077,10 @@ const file_apollo_proto_rawDesc = "" +
 	"\x11framework_version\x18\v \x01(\tR\x10frameworkVersion\x12&\n" +
 	"\x0fis_gpu_workload\x18\f \x01(\bR\risGpuWorkload\x12%\n" +
 	"\x0eis_distributed\x18\r \x01(\bR\risDistributed\x120\n" +
-	"\x14estimated_batch_size\x18\x0e \x01(\x05R\x12estimatedBatchSize\x12@\n" +
+	"\x14estimated_batch_size\x18\x0e \x01(\x05R\x12estimatedBatchSize\x12\x1f\n" +
+	"\vis_pipeline\x18\x15 \x01(\bR\n" +
+	"isPipeline\x12#\n" +
+	"\rpipeline_step\x18\x16 \x01(\tR\fpipelineStep\x12@\n" +
 	"\x0fcurrent_metrics\x18\x0f \x01(\v2\x17.apollo.ResourceMetricsR\x0ecurrentMetrics\x12T\n" +
 	"\x16storage_recommendation\x18\x10 \x01(\v2\x1d.apollo.StorageRecommendationR\x15storageRecommendation\x126\n" +
 	"\fargo_context\x18\x11 \x01(\v2\x13.apollo.ArgoContextR\vargoContext\x129\n" +

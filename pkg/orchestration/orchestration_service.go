@@ -12,16 +12,18 @@ import (
 	"sync"
 	"time"
 
+	"apollo/pkg/forecaster"
+	"apollo/pkg/insight"
 	"apollo/pkg/types"
 )
 
 // OrchestrationPolicyService provides orchestration policies to AI-Storage Orchestrator
 type OrchestrationPolicyService struct {
 	// Reference to insight service for data access
-	insightService *InsightService
+	insightService *insight.InsightService
 
 	// Reference to forecast service for predictions
-	forecastService *ForecastService
+	forecastService *forecaster.ForecastService
 
 	// Active migration tracking
 	activeMigrations map[string]*types.OrchestrationPolicy // key: request_id
@@ -61,7 +63,7 @@ type OrchestrationStats struct {
 }
 
 // NewOrchestrationPolicyService creates a new OrchestrationPolicyService
-func NewOrchestrationPolicyService(insightService *InsightService, forecastService *ForecastService) *OrchestrationPolicyService {
+func NewOrchestrationPolicyService(insightService *insight.InsightService, forecastService *forecaster.ForecastService) *OrchestrationPolicyService {
 	return &OrchestrationPolicyService{
 		insightService:   insightService,
 		forecastService:  forecastService,
@@ -523,4 +525,11 @@ type MigrationStatusUpdate struct {
 	DurationMs     int64  `json:"duration_ms,omitempty"`
 	BytesMigrated  int64  `json:"bytes_migrated,omitempty"`
 	FailureReason  string `json:"failure_reason,omitempty"`
+}
+
+// ReportResponse represents a response to a report request
+type ReportResponse struct {
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id"`
 }

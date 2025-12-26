@@ -27,10 +27,17 @@ spec:
         app.kubernetes.io/managed-by: keti
     spec:
       serviceAccountName: apollo-forecaster
+      # Control Plane에 배치
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
       containers:
       - name: forecaster
         image: ketidevit2/apollo-forecaster:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - name: grpc
           containerPort: 50052

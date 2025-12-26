@@ -27,10 +27,17 @@ spec:
         app.kubernetes.io/managed-by: keti
     spec:
       serviceAccountName: apollo-policy-server
+      # Control Plane에 배치
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
       containers:
       - name: policy-server
         image: ketidevit2/apollo-policy-server:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - name: grpc
           containerPort: 50051

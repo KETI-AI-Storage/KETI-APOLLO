@@ -6,6 +6,7 @@
 package scheduling
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -141,7 +142,7 @@ func (c *SchedulerClient) SendSchedulingPolicy(ctx context.Context, policy *type
 
 		// Create request body (need to recreate for each attempt)
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url,
-			jsonReader(data))
+			bytes.NewReader(data))
 		if err != nil {
 			lastErr = err
 			continue
@@ -186,7 +187,7 @@ func (c *SchedulerClient) NotifyPolicyUpdate(ctx context.Context, podNamespace, 
 		return fmt.Errorf("failed to marshal notification: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, jsonReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

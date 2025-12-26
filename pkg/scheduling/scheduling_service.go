@@ -12,13 +12,18 @@ import (
 	"sync"
 	"time"
 
+	"apollo/pkg/config"
+	"apollo/pkg/insight"
 	"apollo/pkg/types"
 )
 
 // SchedulingPolicyService provides scheduling policies to AI-Storage Scheduler
 type SchedulingPolicyService struct {
 	// Reference to insight service for data access
-	insightService *InsightService
+	insightService *insight.InsightService
+
+	// Configuration (설정값)
+	config *config.SchedulingConfig
 
 	// Policy cache
 	policyCache map[string]*types.SchedulingPolicy // key: pod_namespace/pod_name
@@ -40,16 +45,34 @@ type SchedulingStats struct {
 }
 
 // NewSchedulingPolicyService creates a new SchedulingPolicyService
-func NewSchedulingPolicyService(insightService *InsightService) *SchedulingPolicyService {
+func NewSchedulingPolicyService(insightService *insight.InsightService) *SchedulingPolicyService {
+	return NewSchedulingPolicyServiceWithConfig(insightService, nil)
+}
+
+// NewSchedulingPolicyServiceWithConfig creates a new SchedulingPolicyService with custom config
+func NewSchedulingPolicyServiceWithConfig(insightService *insight.InsightService, cfg *config.SchedulingConfig) *SchedulingPolicyService {
+	if cfg == nil {
+		cfg = config.LoadSchedulingConfigFromEnv()
+	}
+
 	svc := &SchedulingPolicyService{
 		insightService: insightService,
+		config:         cfg,
 		policyCache:    make(map[string]*types.SchedulingPolicy),
 	}
 
 	// Set default policy generator
 	svc.policyGenerator = svc.defaultPolicyGenerator
 
+	log.Printf("[SchedulingPolicy] Initialized with config: PreferThreshold=%d, GPUBonus=%d, CSDBonus=%d",
+		cfg.PreferThreshold, cfg.GPUBonusScore, cfg.CSDBonusScore)
+
 	return svc
+}
+
+// GetConfig returns current scheduling configuration
+func (s *SchedulingPolicyService) GetConfig() *config.SchedulingConfig {
+	return s.config
 }
 
 // SetPolicyGenerator sets custom policy generation function
@@ -136,7 +159,7 @@ func (s *SchedulingPolicyService) defaultPolicyGenerator(sig *types.WorkloadSign
 	policy := &types.SchedulingPolicy{
 		Decision:        types.SchedulingDecisionAllow,
 		NodePreferences: []types.NodePreference{},
-		Priority:        50, // Default priority
+		Priority:        s.config.DefaultPriority,
 	}
 
 	// If no signature, allow scheduling to any node
@@ -172,10 +195,10 @@ func (s *SchedulingPolicyService) defaultPolicyGenerator(sig *types.WorkloadSign
 	if len(policy.NodePreferences) == 0 {
 		policy.Decision = types.SchedulingDecisionAllow
 		policy.Reason = "no specific node preferences, allow scheduling to any node"
-	} else if policy.NodePreferences[0].Score >= 80 {
+	} else if policy.NodePreferences[0].Score >= s.config.PreferThreshold {
 		policy.Decision = types.SchedulingDecisionPrefer
-		policy.Reason = fmt.Sprintf("strongly prefer node %s (score=%d)",
-			policy.NodePreferences[0].NodeName, policy.NodePreferences[0].Score)
+		policy.Reason = fmt.Sprintf("strongly prefer node %s (score=%d, threshold=%d)",
+			policy.NodePreferences[0].NodeName, policy.NodePreferences[0].Score, s.config.PreferThreshold)
 	} else {
 		policy.Decision = types.SchedulingDecisionAllow
 		policy.Reason = "allow scheduling with preferences"
@@ -190,12 +213,12 @@ func (s *SchedulingPolicyService) calculateNodeScore(sig *types.WorkloadSignatur
 		return 0
 	}
 
-	score := 50 // Base score
+	score := s.config.BaseNodeScore
 
 	// Check GPU availability for GPU workloads
 	if sig.IsGPUWorkload {
 		if insight.NodeResources.GPUAvailable > 0 {
-			score += 30
+			score += s.config.GPUBonusScore
 		} else {
 			return 0 // No GPU, not suitable
 		}
@@ -204,8 +227,8 @@ func (s *SchedulingPolicyService) calculateNodeScore(sig *types.WorkloadSignatur
 	// Check CSD availability for storage-intensive workloads
 	if sig.IOPattern == types.IOPatternReadHeavy || sig.IOPattern == types.IOPatternWriteHeavy {
 		for _, csd := range insight.CSDDevices {
-			if csd.IsAvailable && csd.ComputeUtilization < 80 {
-				score += 20
+			if csd.IsAvailable && csd.ComputeUtilization < s.config.CSDUtilizationThreshold {
+				score += s.config.CSDBonusScore
 				break
 			}
 		}
@@ -214,18 +237,18 @@ func (s *SchedulingPolicyService) calculateNodeScore(sig *types.WorkloadSignatur
 	// Check storage device performance
 	for _, storage := range insight.StorageDevices {
 		if storage.DeviceType == "nvme" || storage.DeviceType == "ssd" {
-			if storage.UtilizationPercent < 70 {
-				score += 10
+			if storage.UtilizationPercent < s.config.StorageUtilizationThreshold {
+				score += s.config.FastStorageBonusScore
 			}
 		}
 	}
 
 	// Check resource availability
-	if insight.NodeResources.CPUAvailableCores > 2 {
-		score += 5
+	if insight.NodeResources.CPUAvailableCores > s.config.CPUAvailableThreshold {
+		score += s.config.CPUBonusScore
 	}
-	if insight.NodeResources.MemoryAvailableBytes > 4*1024*1024*1024 { // 4GB
-		score += 5
+	if insight.NodeResources.MemoryAvailableBytes > s.config.MemoryAvailableThreshold {
+		score += s.config.MemoryBonusScore
 	}
 
 	// Cap score at 100
@@ -269,20 +292,20 @@ func (s *SchedulingPolicyService) computeStorageRequirements(sig *types.Workload
 	switch sig.IOPattern {
 	case types.IOPatternReadHeavy:
 		req.StorageClass = types.StorageClassUltraFast
-		req.MinIOPS = 10000
-		req.MinThroughputMBPS = 500
+		req.MinIOPS = s.config.ReadHeavyIOPS
+		req.MinThroughputMBPS = s.config.ReadHeavyThroughput
 	case types.IOPatternWriteHeavy:
 		req.StorageClass = types.StorageClassUltraFast
-		req.MinIOPS = 5000
-		req.MinThroughputMBPS = 300
+		req.MinIOPS = s.config.WriteHeavyIOPS
+		req.MinThroughputMBPS = s.config.WriteHeavyThroughput
 	case types.IOPatternBursty:
 		req.StorageClass = types.StorageClassFast
-		req.MinIOPS = 3000
-		req.MinThroughputMBPS = 200
+		req.MinIOPS = s.config.BurstyIOPS
+		req.MinThroughputMBPS = s.config.BurstyThroughput
 	default:
 		req.StorageClass = types.StorageClassStandard
-		req.MinIOPS = 1000
-		req.MinThroughputMBPS = 100
+		req.MinIOPS = s.config.DefaultIOPS
+		req.MinThroughputMBPS = s.config.DefaultThroughput
 	}
 
 	// Use storage recommendation if available
@@ -393,4 +416,11 @@ type SchedulingResult struct {
 	Success              bool   `json:"success"`
 	FailureReason        string `json:"failure_reason,omitempty"`
 	SchedulingDurationMs int64  `json:"scheduling_duration_ms"`
+}
+
+// ReportResponse represents a response to a report request
+type ReportResponse struct {
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id"`
 }

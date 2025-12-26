@@ -37,6 +37,8 @@ message WorkloadSignature {
   bool is_gpu_workload = 12;
   bool is_distributed = 13;
   int32 estimated_batch_size = 14;
+  bool is_pipeline = 21;            // Whether this is a pipeline/DAG workload
+  string pipeline_step = 22;        // Current step: preprocess, train, evaluate
 
   // Current metrics
   ResourceMetrics current_metrics = 15;
