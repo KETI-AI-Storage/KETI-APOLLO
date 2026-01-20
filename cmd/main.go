@@ -404,6 +404,9 @@ func (s *APOLLOServer) StartHTTP(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/data/workloads", s.handleDataWorkloads)
 	mux.HandleFunc("/api/v1/data/insights", s.handleDataInsights)
 
+	// Insight endpoints (for insight-trace sidecar HTTP reporting)
+	mux.HandleFunc("/api/v1/insight/report", s.handleInsightReport)
+
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.config.HTTPPort),
 		Handler: mux,
@@ -474,6 +477,44 @@ func (s *APOLLOServer) handleDataInsights(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.clusterInsights)
+}
+
+// handleInsightReport handles POST /api/v1/insight/report from insight-trace sidecars
+func (s *APOLLOServer) handleInsightReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var report struct {
+		TraceID      string                 `json:"trace_id"`
+		PodName      string                 `json:"pod_name"`
+		PodNamespace string                 `json:"pod_namespace"`
+		Signature    map[string]interface{} `json:"signature"`
+		Timestamp    time.Time              `json:"timestamp"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Log the received report
+	log.Printf("[HTTP] Insight report received: %s/%s (trace: %s)",
+		report.PodNamespace, report.PodName, report.TraceID)
+
+	// Store in workloadSignatures map (simplified - actual signature is received via gRPC)
+	key := fmt.Sprintf("%s/%s", report.PodNamespace, report.PodName)
+	s.dataMu.Lock()
+	// Note: Full signature is stored via gRPC, HTTP report is supplementary
+	s.dataMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "received",
+		"message":    fmt.Sprintf("Report received for %s", key),
+		"request_id": report.TraceID,
+	})
 }
 
 // Shutdown gracefully shuts down the server
