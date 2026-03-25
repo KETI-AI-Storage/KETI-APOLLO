@@ -1,0 +1,29 @@
+# Test workload for APOLLO scheduling
+apiVersion: v1
+kind: Pod
+metadata:
+  name: apollo-test-workload
+  namespace: default
+  labels:
+    app: apollo-test
+    app.kubernetes.io/component: preprocessing
+  annotations:
+    apollo.ai-storage/workload-type: "preprocessing"
+    apollo.ai-storage/io-pattern: "read_heavy"
+    apollo.ai-storage/requires-gpu: "false"
+    apollo.ai-storage/data-size-gb: "10"
+    apollo.ai-storage/dataset-name: "test-dataset"
+spec:
+  schedulerName: ai-storage-scheduler
+  containers:
+  - name: test-container
+    image: busybox
+    command: ["sh", "-c", "echo 'APOLLO test workload running' && sleep 60"]
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+  restartPolicy: Never

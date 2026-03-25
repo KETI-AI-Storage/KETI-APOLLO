@@ -1,0 +1,15 @@
+# Node Resource Forecaster (LSTM-Attention + Multi-LightGBM)
+# 발표자료 기반 구현
+# Note: torch and lightgbm are installed separately in Dockerfile
+
+# Core dependencies
+numpy>=1.24.0
+grpcio>=1.59.0
+grpcio-tools>=1.59.0
+protobuf>=4.24.0
+pyyaml>=6.0
+prometheus-client>=0.18.0
+flask>=3.0.0
+
+# Kubernetes client (for real cluster state)
+kubernetes>=28.1.0

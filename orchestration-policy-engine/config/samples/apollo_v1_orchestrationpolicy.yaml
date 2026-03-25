@@ -1,0 +1,9 @@
+apiVersion: apollo.keti.re.kr/v1
+kind: OrchestrationPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: orchestration-policy-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: orchestrationpolicy-sample
+spec:
+  # TODO(user): Add fields here

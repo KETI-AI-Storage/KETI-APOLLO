@@ -1,0 +1,109 @@
+# ============================================
+# Scheduling Policy Engine Deployment
+# PPO RL 기반 스케줄링 정책 엔진
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduling-policy-engine
+  namespace: apollo
+  labels:
+    app: scheduling-policy-engine
+    component: policy-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scheduling-policy-engine
+  template:
+    metadata:
+      labels:
+        app: scheduling-policy-engine
+        component: policy-engine
+    spec:
+      serviceAccountName: apollo-policy-engine
+      containers:
+      - name: scheduling-policy-engine
+        image: docker.io/library/scheduling-policy-engine:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 50054
+          name: grpc
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: GRPC_PORT
+          value: "50054"
+        - name: MODEL_PATH
+          value: "/models/ppo_scheduler.pt"
+        - name: LOG_LEVEL
+          value: "DEBUG"
+        - name: FORECASTER_ENDPOINT
+          value: "node-resource-forecaster.apollo.svc.cluster.local:50055"
+        - name: INSIGHT_SCOPE_ADDR
+          value: "insight-scope.apollo.svc.cluster.local:50051"
+        - name: INSIGHT_TRACE_ADDR
+          value: "insight-trace.apollo.svc.cluster.local:50052"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+            nvidia.com/gpu: "0"  # GPU 사용시 변경
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+        livenessProbe:
+          tcpSocket:
+            port: 50054
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 50054
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: scheduling-policy-engine-models
+      nodeSelector:
+        layer: orchestration
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduling-policy-engine
+  namespace: apollo
+  labels:
+    app: scheduling-policy-engine
+spec:
+  type: ClusterIP
+  ports:
+  - port: 50054
+    targetPort: 50054
+    name: grpc
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+  selector:
+    app: scheduling-policy-engine
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scheduling-policy-engine-models
+  namespace: apollo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: nfs-client

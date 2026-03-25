@@ -1,0 +1,26 @@
+# Test 2: Training workload (GPU required, write-heavy for checkpoints)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-training
+  namespace: default
+  labels:
+    app: apollo-test
+    app.kubernetes.io/component: training
+  annotations:
+    apollo.ai-storage/workload-type: "training"
+    apollo.ai-storage/io-pattern: "balanced"
+    apollo.ai-storage/requires-gpu: "true"
+    apollo.ai-storage/data-size-gb: "100"
+    apollo.ai-storage/dataset-name: "training-data"
+spec:
+  schedulerName: ai-storage-scheduler
+  containers:
+  - name: training
+    image: busybox
+    command: ["sh", "-c", "echo 'Training workload' && sleep 30"]
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+  restartPolicy: Never

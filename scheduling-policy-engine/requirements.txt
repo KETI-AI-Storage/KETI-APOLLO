@@ -1,0 +1,8 @@
+# APOLLO Scheduling Policy Engine (CPU-only, 경량화)
+numpy>=1.24.0
+grpcio>=1.59.0
+grpcio-tools>=1.59.0
+protobuf>=4.24.0
+pyyaml>=6.0
+prometheus-client>=0.17.0
+kubernetes>=28.1.0

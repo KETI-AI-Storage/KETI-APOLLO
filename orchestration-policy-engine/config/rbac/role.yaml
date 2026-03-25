@@ -1,0 +1,41 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apollo.keti.re.kr
+  resources:
+  - orchestrationpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apollo.keti.re.kr
+  resources:
+  - orchestrationpolicies/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - apollo.keti.re.kr
+  resources:
+  - orchestrationpolicies/status
+  verbs:
+  - get
+  - patch
+  - update

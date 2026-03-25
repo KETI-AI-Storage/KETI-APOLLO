@@ -1,0 +1,28 @@
+# ============================================
+# APOLLO Kustomization
+# kubectl apply -k deployments/
+# ============================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: apollo
+
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - configmap.yaml
+  - scheduling-policy-engine.yaml
+  - node-resource-forecaster.yaml
+  - orchestration-policy-engine.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: apollo
+  app.kubernetes.io/managed-by: kustomize
+
+images:
+  - name: ketidevit2/scheduling-policy-engine
+    newTag: latest
+  - name: ketidevit2/node-resource-forecaster
+    newTag: latest
+  - name: ketidevit2/orchestration-policy-engine
+    newTag: latest

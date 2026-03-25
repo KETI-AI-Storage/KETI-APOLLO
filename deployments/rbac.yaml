@@ -1,0 +1,90 @@
+# ============================================
+# APOLLO RBAC Configuration
+# ============================================
+---
+# Service Account for Policy Engines
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apollo-policy-engine
+  namespace: apollo
+---
+# Service Account for Forecaster
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apollo-forecaster
+  namespace: apollo
+---
+# ClusterRole for Policy Engines
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: apollo-policy-engine
+rules:
+# Pod and Node access
+- apiGroups: [""]
+  resources: ["pods", "nodes", "namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/status"]
+  verbs: ["get"]
+# Metrics access
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+# Kueue access
+- apiGroups: ["kueue.x-k8s.io"]
+  resources: ["workloads", "clusterqueues", "localqueues"]
+  verbs: ["get", "list", "watch"]
+# Events
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+# ConfigMaps for configuration
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+---
+# ClusterRole for Forecaster
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: apollo-forecaster
+rules:
+# Node metrics
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+# Node info
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding for Policy Engines
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: apollo-policy-engine
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: apollo-policy-engine
+subjects:
+- kind: ServiceAccount
+  name: apollo-policy-engine
+  namespace: apollo
+---
+# ClusterRoleBinding for Forecaster
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: apollo-forecaster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: apollo-forecaster
+subjects:
+- kind: ServiceAccount
+  name: apollo-forecaster
+  namespace: apollo

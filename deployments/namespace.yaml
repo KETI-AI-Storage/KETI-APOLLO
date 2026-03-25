@@ -1,0 +1,10 @@
+# ============================================
+# APOLLO Namespace
+# ============================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apollo
+  labels:
+    app.kubernetes.io/name: apollo
+    app.kubernetes.io/part-of: keti-ai-storage

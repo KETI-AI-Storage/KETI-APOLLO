@@ -1,0 +1,128 @@
+# ============================================
+# Node Resource Forecaster Deployment
+# LSTM 기반 노드 리소스 예측 서비스
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-resource-forecaster
+  namespace: apollo
+  labels:
+    app: node-resource-forecaster
+    component: forecaster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-resource-forecaster
+  template:
+    metadata:
+      labels:
+        app: node-resource-forecaster
+        component: forecaster
+    spec:
+      serviceAccountName: apollo-forecaster
+      containers:
+      - name: node-resource-forecaster
+        image: docker.io/library/node-resource-forecaster:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 50055
+          name: grpc
+        - containerPort: 9091
+          name: metrics
+        env:
+        - name: GRPC_PORT
+          value: "50055"
+        - name: MODEL_PATH
+          value: "/models/lstm_forecaster.pt"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: PROMETHEUS_URL
+          value: "http://prometheus.monitoring.svc.cluster.local:9090"
+        - name: HISTORY_RETENTION_HOURS
+          value: "24"
+        - name: INSIGHT_HUB_ADDR
+          value: "insight-hub.apollo.svc.cluster.local:50056"
+        - name: INSIGHT_HUB_SYNC_INTERVAL_SEC
+          value: "30"
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+        - name: history-data
+          mountPath: /data
+        livenessProbe:
+          tcpSocket:
+            port: 50055
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 50055
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: forecaster-models
+      - name: history-data
+        persistentVolumeClaim:
+          claimName: forecaster-history
+      nodeSelector:
+        layer: orchestration
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-resource-forecaster
+  namespace: apollo
+  labels:
+    app: node-resource-forecaster
+spec:
+  type: ClusterIP
+  ports:
+  - port: 50055
+    targetPort: 50055
+    name: grpc
+  - port: 9091
+    targetPort: 9091
+    name: metrics
+  selector:
+    app: node-resource-forecaster
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forecaster-models
+  namespace: apollo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: nfs-client
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forecaster-history
+  namespace: apollo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: nfs-client

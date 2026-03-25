@@ -1,0 +1,73 @@
+apiVersion: apollo.keti.re.kr/v1
+kind: OrchestrationPolicy
+metadata:
+  name: test-auto-migration
+  namespace: apollo
+  labels:
+    app: orchestration-policy-engine
+    test: auto-execute
+spec:
+  policyType: migration
+  probability: 90
+  urgency: HIGH
+  resourceType: GPU
+  targetNode: gpu-server-03
+  sourceNode: ai-storage-worker-01
+  targetWorkload: test-workload
+  targetNamespace: default
+  reason: "테스트: GPU 사용률 95% 예측 - 자동 마이그레이션 실행"
+  horizon: 10
+  autoExecute: true
+  priorityScore: 85
+  parameters:
+    predicted_utilization: "0.95"
+    threshold: "0.85"
+    preservePV: "true"
+---
+apiVersion: apollo.keti.re.kr/v1
+kind: OrchestrationPolicy
+metadata:
+  name: test-auto-scaling
+  namespace: apollo
+  labels:
+    app: orchestration-policy-engine
+    test: auto-execute
+spec:
+  policyType: scaling
+  probability: 85
+  urgency: MEDIUM
+  resourceType: CPU
+  targetNode: ai-storage-worker-01
+  targetWorkload: nginx-deployment
+  targetNamespace: default
+  reason: "테스트: CPU 사용률 80% 예측 - 자동 스케일링 실행"
+  horizon: 30
+  autoExecute: true
+  priorityScore: 70
+  parameters:
+    predicted_utilization: "0.80"
+    threshold: "0.70"
+---
+apiVersion: apollo.keti.re.kr/v1
+kind: OrchestrationPolicy
+metadata:
+  name: test-auto-caching
+  namespace: apollo
+  labels:
+    app: orchestration-policy-engine
+    test: auto-execute
+spec:
+  policyType: caching
+  probability: 75
+  urgency: LOW
+  resourceType: STORAGE_IO
+  targetNode: csd-server-01
+  targetWorkload: data-processing-job
+  targetNamespace: default
+  reason: "테스트: Storage I/O 75% 예측 - 자동 캐싱 구성"
+  horizon: 60
+  autoExecute: true
+  priorityScore: 60
+  parameters:
+    predicted_utilization: "0.75"
+    threshold: "0.70"

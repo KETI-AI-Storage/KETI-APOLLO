@@ -1,0 +1,26 @@
+# Test 3: CSD-required workload (computational storage needed)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-csd-workload
+  namespace: default
+  labels:
+    app: apollo-test
+    app.kubernetes.io/component: data-processing
+  annotations:
+    apollo.ai-storage/workload-type: "preprocessing"
+    apollo.ai-storage/io-pattern: "random"
+    apollo.ai-storage/requires-gpu: "false"
+    apollo.ai-storage/requires-csd: "true"
+    apollo.ai-storage/data-size-gb: "200"
+spec:
+  schedulerName: ai-storage-scheduler
+  containers:
+  - name: csd-processing
+    image: busybox
+    command: ["sh", "-c", "echo 'CSD workload' && sleep 30"]
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+  restartPolicy: Never

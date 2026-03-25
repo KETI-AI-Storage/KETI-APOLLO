@@ -1,0 +1,83 @@
+# ============================================
+# APOLLO ConfigMap
+# 공통 설정 및 모델 하이퍼파라미터
+# ============================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apollo-config
+  namespace: apollo
+data:
+  # gRPC Service Endpoints
+  INSIGHT_SCOPE_ADDR: "insight-scope.apollo.svc.cluster.local:50051"
+  INSIGHT_TRACE_ADDR: "insight-trace.apollo.svc.cluster.local:50052"
+  SCHEDULING_POLICY_ENGINE_ADDR: "scheduling-policy-engine.apollo.svc.cluster.local:50054"
+  NODE_RESOURCE_FORECASTER_ADDR: "node-resource-forecaster.apollo.svc.cluster.local:50055"
+  ORCHESTRATION_POLICY_ENGINE_ADDR: "orchestration-policy-engine.apollo.svc.cluster.local:50056"
+
+  # External Services
+  MANTA_GRPC_ADDR: "manta-grpc.keti.svc.cluster.local:50052"
+  PROMETHEUS_URL: "http://prometheus.monitoring.svc.cluster.local:9090"
+
+  # Scheduling Policy Engine (PPO) Config
+  ppo-config.yaml: |
+    # PPO Hyperparameters
+    hidden_dim: 256
+    num_layers: 2
+    num_plugins: 5
+    learning_rate: 0.0003
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_epsilon: 0.2
+    entropy_coef: 0.01
+    value_loss_coef: 0.5
+    max_grad_norm: 0.5
+
+    # Training
+    batch_size: 64
+    update_epochs: 10
+
+    # Plugin weights (initial)
+    plugin_weights:
+      data_locality_aware: 0.25
+      storage_tier_aware: 0.20
+      io_pattern_based: 0.20
+      kueue_aware: 0.15
+      pipeline_stage_aware: 0.20
+
+  # Node Resource Forecaster (LSTM) Config
+  lstm-config.yaml: |
+    # LSTM Hyperparameters
+    input_dim: 4
+    hidden_dim: 64
+    num_layers: 2
+    output_dim: 4
+    dropout: 0.2
+
+    # Sequence settings
+    sequence_length: 60
+    forecast_horizons: [5, 10, 30, 60]
+
+    # Training
+    learning_rate: 0.001
+    batch_size: 32
+    epochs: 100
+
+  # Orchestration Policy Engine (DQN) Config
+  dqn-config.yaml: |
+    # DQN Hyperparameters
+    hidden_dim: 256
+    learning_rate: 0.0001
+    gamma: 0.99
+    epsilon_start: 1.0
+    epsilon_end: 0.01
+    epsilon_decay: 0.995
+    target_update_freq: 100
+
+    # Action space
+    num_action_types: 7
+    max_target_nodes: 32
+
+    # Replay buffer
+    replay_buffer_size: 100000
+    batch_size: 64

@@ -1,0 +1,108 @@
+# ============================================
+# Orchestration Policy Engine Deployment
+# DQN/Actor-Critic 기반 오케스트레이션 정책 엔진
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestration-policy-engine
+  namespace: apollo
+  labels:
+    app: orchestration-policy-engine
+    component: policy-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestration-policy-engine
+  template:
+    metadata:
+      labels:
+        app: orchestration-policy-engine
+        component: policy-engine
+    spec:
+      serviceAccountName: apollo-policy-engine
+      containers:
+      - name: orchestration-policy-engine
+        image: docker.io/library/orchestration-policy-engine:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 50056
+          name: grpc
+        - containerPort: 9092
+          name: metrics
+        env:
+        - name: GRPC_PORT
+          value: "50056"
+        - name: MODEL_PATH
+          value: "/models/dqn_orchestrator.pt"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: INSIGHT_SCOPE_ADDR
+          value: "insight-scope.apollo.svc.cluster.local:50051"
+        - name: FORECASTER_ADDR
+          value: "node-resource-forecaster.apollo.svc.cluster.local:50055"
+        - name: MANTA_ADDR
+          value: "manta-grpc.keti.svc.cluster.local:50052"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+        livenessProbe:
+          tcpSocket:
+            port: 50056
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 50056
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: orchestration-policy-engine-models
+      nodeSelector:
+        layer: orchestration
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestration-policy-engine
+  namespace: apollo
+  labels:
+    app: orchestration-policy-engine
+spec:
+  type: ClusterIP
+  ports:
+  - port: 50056
+    targetPort: 50056
+    name: grpc
+  - port: 9092
+    targetPort: 9092
+    name: metrics
+  selector:
+    app: orchestration-policy-engine
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestration-policy-engine-models
+  namespace: apollo
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: nfs-client

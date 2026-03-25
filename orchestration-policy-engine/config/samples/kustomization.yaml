@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- apollo_v1_orchestrationpolicy.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

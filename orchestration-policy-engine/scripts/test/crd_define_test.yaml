@@ -1,0 +1,21 @@
+apiVersion: apollo.keti.re.kr/v1
+kind: OrchestrationPolicy
+metadata:
+  name: test-migration-policy
+  namespace: default
+spec:
+  policyType: migration
+  probability: 85
+  urgency: HIGH
+  resourceType: GPU
+  targetNode: worker-node-2
+  sourceNode: worker-node-1
+  targetWorkload: ai-training-pod
+  targetNamespace: default
+  reason: "GPU 사용률 90% 초과 예측 - 30분 후"
+  horizon: 30
+  autoExecute: false
+  priorityScore: 75
+  parameters:
+    estimatedDuration: "5m"
+    checkpointEnabled: "true"
