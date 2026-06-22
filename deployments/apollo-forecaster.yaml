@@ -141,7 +141,9 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: apollo-forecaster
+  # apollo/deployments/rbac.yaml L98-L108 과 동일 이름(apollo-forecaster)이면
+  # apollo 네임스페이스 SA 바인딩만 남는 덮어쓰기가 발생할 수 있어 이름을 분리함.
+  name: apollo-forecaster-keti
   labels:
     app.kubernetes.io/name: apollo-forecaster
     app.kubernetes.io/part-of: apollo

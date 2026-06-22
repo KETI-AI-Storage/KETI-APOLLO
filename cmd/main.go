@@ -232,12 +232,23 @@ func (s *APOLLOServer) getSchedulingPolicy(podName, podNamespace string) *pb.Sch
 
 	if !exists {
 		policy.Reason = "No workload signature found, using default policy"
+		// Default plugin weights
+		policy.PluginWeights = &pb.PluginWeights{
+			DataLocalityAware:  0.5,
+			StorageTierAware:   0.5,
+			IoPatternBased:     0.5,
+			KueueAware:         0.5,
+			PipelineStageAware: 0.5,
+		}
 		return policy
 	}
 
 	// Generate policy based on workload signature
 	policy.NodePreferences = s.calculateNodePreferences(sig)
 	policy.Reason = fmt.Sprintf("Policy based on %s workload, %s stage", sig.WorkloadType.String(), sig.CurrentStage.String())
+
+	// Compute dynamic plugin weights based on workload characteristics
+	policy.PluginWeights = s.calculatePluginWeights(sig)
 
 	// Set storage requirements if GPU workload
 	if sig.IsGpuWorkload {
@@ -247,7 +258,65 @@ func (s *APOLLOServer) getSchedulingPolicy(podName, podNamespace string) *pb.Sch
 		}
 	}
 
+	log.Printf("[SchedulingPolicy] PluginWeights: DLA=%.2f, STA=%.2f, IOPB=%.2f, KA=%.2f, PSA=%.2f",
+		policy.PluginWeights.DataLocalityAware, policy.PluginWeights.StorageTierAware,
+		policy.PluginWeights.IoPatternBased, policy.PluginWeights.KueueAware,
+		policy.PluginWeights.PipelineStageAware)
+
 	return policy
+}
+
+// calculatePluginWeights computes dynamic plugin weights based on workload signature
+func (s *APOLLOServer) calculatePluginWeights(sig *pb.WorkloadSignature) *pb.PluginWeights {
+	weights := &pb.PluginWeights{
+		DataLocalityAware:  0.5,
+		StorageTierAware:   0.5,
+		IoPatternBased:     0.5,
+		KueueAware:         0.5,
+		PipelineStageAware: 0.5,
+	}
+
+	// Adjust based on I/O pattern
+	switch sig.IoPattern {
+	case pb.IOPattern_IO_PATTERN_READ_HEAVY, pb.IOPattern_IO_PATTERN_WRITE_HEAVY:
+		weights.DataLocalityAware = 0.8
+		weights.StorageTierAware = 0.9
+		weights.IoPatternBased = 0.9
+	case pb.IOPattern_IO_PATTERN_SEQUENTIAL:
+		weights.StorageTierAware = 0.8
+		weights.IoPatternBased = 0.7
+	case pb.IOPattern_IO_PATTERN_RANDOM:
+		weights.StorageTierAware = 0.9
+		weights.IoPatternBased = 0.8
+	case pb.IOPattern_IO_PATTERN_BURSTY:
+		weights.StorageTierAware = 0.7
+		weights.IoPatternBased = 0.6
+	}
+
+	// Adjust based on pipeline stage
+	switch sig.CurrentStage {
+	case pb.PipelineStage_PIPELINE_STAGE_DATA_LOADING, pb.PipelineStage_PIPELINE_STAGE_PREPROCESSING:
+		weights.DataLocalityAware = 0.9
+		weights.PipelineStageAware = 0.8
+	case pb.PipelineStage_PIPELINE_STAGE_TRAINING:
+		weights.PipelineStageAware = 0.7
+		if sig.IsGpuWorkload {
+			weights.StorageTierAware = 0.6
+		}
+	case pb.PipelineStage_PIPELINE_STAGE_INFERENCE:
+		weights.StorageTierAware = 0.8
+		weights.PipelineStageAware = 0.7
+	case pb.PipelineStage_PIPELINE_STAGE_CHECKPOINTING:
+		weights.StorageTierAware = 0.9
+		weights.IoPatternBased = 0.8
+	}
+
+	// Kueue for batch workloads
+	if sig.WorkloadType == pb.WorkloadType_WORKLOAD_TYPE_IMAGE || sig.WorkloadType == pb.WorkloadType_WORKLOAD_TYPE_TEXT {
+		weights.KueueAware = 0.7
+	}
+
+	return weights
 }
 
 // calculateNodePreferences calculates node preferences based on workload and cluster state

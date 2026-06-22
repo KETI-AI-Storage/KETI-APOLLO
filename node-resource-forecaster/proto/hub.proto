@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package insight.hub.v1;
+
+option go_package = "insight-hub/proto/hubpb";
+
+// Insight Hub: persistent store for node resource history from insight-scope.
+// Forecaster pulls via GetNodeHistory / ListNodes instead of receiving SubmitHistoryData directly.
+service InsightHubService {
+  rpc SubmitHistoryData(SubmitHistoryRequest) returns (SubmitHistoryResponse);
+  rpc GetNodeHistory(GetNodeHistoryRequest) returns (GetNodeHistoryResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Wall-clock time in milliseconds since Unix epoch (UTC).
+message ResourceSnapshot {
+  int64 timestamp_unix_ms = 1;
+  double cpu_utilization = 2;
+  double memory_utilization = 3;
+  double gpu_utilization = 4;
+  double storage_io_utilization = 5;
+}
+
+message SubmitHistoryRequest {
+  string node_name = 1;
+  repeated ResourceSnapshot snapshots = 2;
+}
+
+message SubmitHistoryResponse {
+  bool accepted = 1;
+  int32 snapshots_processed = 2;
+}
+
+message GetNodeHistoryRequest {
+  string node_name = 1;
+  int64 since_unix_ms = 2;
+  int32 max_snapshots = 3;
+}
+
+message GetNodeHistoryResponse {
+  repeated ResourceSnapshot snapshots = 1;
+}
+
+message ListNodesRequest {}
+
+message ListNodesResponse {
+  repeated string node_names = 1;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  int64 total_snapshots = 3;
+}

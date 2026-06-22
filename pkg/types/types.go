@@ -186,6 +186,16 @@ type ClusterInsight struct {
 // 3. SchedulingPolicy: APOLLO -> Scheduler
 // ============================================
 
+// PluginWeights contains dynamic weights for KETI scoring plugins
+// APOLLO adjusts these weights based on workload characteristics
+type PluginWeights struct {
+	DataLocalityAware  float32 `json:"data_locality_aware"`   // 0.0-1.0
+	StorageTierAware   float32 `json:"storage_tier_aware"`    // 0.0-1.0
+	IOPatternBased     float32 `json:"io_pattern_based"`      // 0.0-1.0
+	KueueAware         float32 `json:"kueue_aware"`           // 0.0-1.0
+	PipelineStageAware float32 `json:"pipeline_stage_aware"`  // 0.0-1.0
+}
+
 type SchedulingPolicy struct {
 	// Request identification
 	RequestID    string `json:"request_id"`
@@ -213,6 +223,9 @@ type SchedulingPolicy struct {
 
 	// Affinity rules
 	AffinityRules []AffinityRule `json:"affinity_rules,omitempty"`
+
+	// Plugin weights for dynamic scoring (APOLLO -> Scheduler)
+	PluginWeights *PluginWeights `json:"plugin_weights,omitempty"`
 
 	// Reasoning
 	Reason string `json:"reason,omitempty"`

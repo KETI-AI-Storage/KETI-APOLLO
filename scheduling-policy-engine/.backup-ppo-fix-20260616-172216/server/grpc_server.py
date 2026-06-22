@@ -1138,13 +1138,8 @@ class SchedulingPolicyServicer(apollo_pb2_grpc.SchedulingPolicyServiceServicer):
         return preferences
 
     def _create_workload_signature(self, workload_info: Dict,
-                                    weights: np.ndarray) -> apollo_pb2.WorkloadSignatureInfo:
-        """WorkloadSignatureInfo 생성 (SchedulingPolicy.workload_signature 용).
-
-        주의: 스케줄러로 돌려보내는 응답용 메시지는 WorkloadSignatureInfo 다.
-        Insight Trace가 APOLLO로 보고하는 WorkloadSignature 와는 별개 메시지이며,
-        이쪽에만 dataset_name / data_locations 필드가 존재한다.
-        """
+                                    weights: np.ndarray) -> apollo_pb2.WorkloadSignature:
+        """WorkloadSignature 생성"""
         # 워크로드 타입 매핑
         wt_map = {
             'training': apollo_pb2.WORKLOAD_TYPE_GENERIC,
@@ -1171,7 +1166,7 @@ class SchedulingPolicyServicer(apollo_pb2_grpc.SchedulingPolicyServiceServicer):
             'random': apollo_pb2.IO_PATTERN_RANDOM,
         }
 
-        return apollo_pb2.WorkloadSignatureInfo(
+        return apollo_pb2.WorkloadSignature(
             workload_type=wt_map.get(workload_info['workload_type'], apollo_pb2.WORKLOAD_TYPE_UNKNOWN),
             current_stage=ps_map.get(workload_info['pipeline_stage'], apollo_pb2.PIPELINE_STAGE_UNKNOWN),
             io_pattern=io_map.get(workload_info['io_pattern'], apollo_pb2.IO_PATTERN_UNKNOWN),

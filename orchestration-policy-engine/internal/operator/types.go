@@ -12,13 +12,27 @@ import "time"
 
 // MigrationRequest 마이그레이션 요청
 type MigrationRequest struct {
-	PodName      string `json:"pod_name"`
-	PodNamespace string `json:"pod_namespace"`
-	SourceNode   string `json:"source_node"`
-	TargetNode   string `json:"target_node"`
-	PreservePV   bool   `json:"preserve_pv,omitempty"`
-	ForceRestart bool   `json:"force_restart,omitempty"`
-	Timeout      int    `json:"timeout,omitempty"` // seconds
+	PodName            string                 `json:"pod_name,omitempty"`
+	PodNamespace       string                 `json:"pod_namespace,omitempty"`
+	WorkloadName       string                 `json:"workload_name,omitempty"`
+	WorkloadNamespace  string                 `json:"workload_namespace,omitempty"`
+	WorkloadType       string                 `json:"workload_type,omitempty"`
+	SourceNode         string                 `json:"source_node,omitempty"`
+	TargetNode         string                 `json:"target_node"`
+	PreservePV         bool                   `json:"preserve_pv,omitempty"`
+	ForceRestart       bool                   `json:"force_restart,omitempty"`
+	Timeout            int                    `json:"timeout,omitempty"` // seconds
+	Stage              string                 `json:"stage,omitempty"`
+	RunID              string                 `json:"run_id,omitempty"`
+	PolicyName         string                 `json:"policy_name,omitempty"`
+	Action             string                 `json:"action,omitempty"`
+	ResourceRequests   map[string]string      `json:"resource_requests,omitempty"`
+	SchedulerName      string                 `json:"scheduler_name,omitempty"`
+	NodeSelector       map[string]string      `json:"node_selector,omitempty"`
+	Affinity           map[string]interface{} `json:"affinity,omitempty"`
+	QueueLabel         string                 `json:"queue_label,omitempty"`
+	StorageAnnotations map[string]string      `json:"storage_annotations,omitempty"`
+	PolicyAnnotations  map[string]string      `json:"policy_annotations,omitempty"`
 }
 
 // MigrationResponse 마이그레이션 응답
@@ -55,16 +69,16 @@ type AutoscalingRequest struct {
 
 // AutoscalingResponse 오토스케일링 응답
 type AutoscalingResponse struct {
-	AutoscalingID string               `json:"autoscaling_id"`
-	Status        string               `json:"status"` // active, inactive, failed
-	Message       string               `json:"message"`
-	Details       *AutoscalingDetails  `json:"details,omitempty"`
+	AutoscalingID string              `json:"autoscaling_id"`
+	Status        string              `json:"status"` // active, inactive, failed
+	Message       string              `json:"message"`
+	Details       *AutoscalingDetails `json:"details,omitempty"`
 }
 
 // AutoscalingDetails 오토스케일링 상세
 type AutoscalingDetails struct {
-	CurrentReplicas int32 `json:"current_replicas"`
-	DesiredReplicas int32 `json:"desired_replicas"`
+	CurrentReplicas int32  `json:"current_replicas"`
+	DesiredReplicas int32  `json:"desired_replicas"`
 	HPAName         string `json:"hpa_name,omitempty"`
 }
 
@@ -74,12 +88,16 @@ type AutoscalingDetails struct {
 
 // ProvisioningRequest 프로비저닝 요청
 type ProvisioningRequest struct {
-	WorkloadName      string `json:"workload_name"`
-	WorkloadNamespace string `json:"workload_namespace"`
-	WorkloadType      string `json:"workload_type"` // training, inference, data-pipeline
-	StorageSize       string `json:"storage_size,omitempty"`
-	StorageClass      string `json:"storage_class,omitempty"`
-	AccessMode        string `json:"access_mode,omitempty"`
+	WorkloadName      string            `json:"workload_name"`
+	WorkloadNamespace string            `json:"workload_namespace"`
+	WorkloadType      string            `json:"workload_type"` // training, inference, data-pipeline
+	RunID             string            `json:"run_id,omitempty"`
+	TargetStage       string            `json:"target_stage,omitempty"`
+	StorageSize       string            `json:"storage_size,omitempty"`
+	StorageClass      string            `json:"storage_class,omitempty"`
+	AccessMode        string            `json:"access_mode,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
 }
 
 // ProvisioningResponse 프로비저닝 응답
@@ -124,9 +142,9 @@ type CachingResponse struct {
 
 // CacheDetails 캐시 상세
 type CacheDetails struct {
-	TargetTier      string `json:"target_tier"`
-	CacheSizeBytes  int64  `json:"cache_size_bytes"`
-	HitRatio        float64 `json:"hit_ratio,omitempty"`
+	TargetTier     string  `json:"target_tier"`
+	CacheSizeBytes int64   `json:"cache_size_bytes"`
+	HitRatio       float64 `json:"hit_ratio,omitempty"`
 }
 
 // ============================================
@@ -135,15 +153,20 @@ type CacheDetails struct {
 
 // LoadbalanceRequest 로드밸런싱 요청
 type LoadbalanceRequest struct {
-	TargetNode      string   `json:"target_node"`
-	WorkloadNames   []string `json:"workload_names,omitempty"`
-	Strategy        string   `json:"strategy,omitempty"` // round-robin, least-connections, ip-hash
-	Reason          string   `json:"reason,omitempty"`
+	Namespace   string   `json:"namespace,omitempty"`
+	TargetNodes []string `json:"target_nodes,omitempty"`
+	Strategy    string   `json:"strategy,omitempty"`
+
+	// 임계치/한도는 0이면 오케스트레이터 기본값(80/80/80/5)이 적용된다.
+	CPUThreshold          int32 `json:"cpu_threshold,omitempty"`
+	MemoryThreshold       int32 `json:"memory_threshold,omitempty"`
+	GPUThreshold          int32 `json:"gpu_threshold,omitempty"`
+	MaxMigrationsPerCycle int32 `json:"max_migrations_per_cycle,omitempty"`
 }
 
 // LoadbalanceResponse 로드밸런싱 응답
 type LoadbalanceResponse struct {
-	LoadbalanceID string `json:"loadbalance_id"`
+	LoadbalanceID string `json:"loadbalancing_id"`
 	Status        string `json:"status"`
 	Message       string `json:"message"`
 }
@@ -154,18 +177,27 @@ type LoadbalanceResponse struct {
 
 // PreemptionRequest 선점 요청
 type PreemptionRequest struct {
-	WorkloadName      string `json:"workload_name"`
-	WorkloadNamespace string `json:"workload_namespace"`
-	Priority          int32  `json:"priority"`
-	Reason            string `json:"reason,omitempty"`
+	NodeName     string `json:"node_name"`
+	Namespace    string `json:"namespace,omitempty"`
+	ResourceType string `json:"resource_type"`
+	TargetAmount string `json:"target_amount"`
+	Reason       string `json:"reason,omitempty"`
+
+	// MinPriority: 이 값 미만 priority의 Pod만 후보가 된다.
+	// 기본 0이면 일반 Pod(priority=0)도 후보 제외되므로 데모에서 양수 권장.
+	Strategy            string   `json:"strategy,omitempty"`
+	MinPriority         int32    `json:"min_priority,omitempty"`
+	MaxPodsToPreempt    int32    `json:"max_pods_to_preempt,omitempty"`
+	GracePeriodSeconds  int64    `json:"grace_period_seconds,omitempty"`
+	ProtectedNamespaces []string `json:"protected_namespaces,omitempty"`
 }
 
 // PreemptionResponse 선점 응답
 type PreemptionResponse struct {
-	PreemptionID   string   `json:"preemption_id"`
-	Status         string   `json:"status"`
-	Message        string   `json:"message"`
-	PreemptedPods  []string `json:"preempted_pods,omitempty"`
+	PreemptionID  string   `json:"preemption_id"`
+	Status        string   `json:"status"`
+	Message       string   `json:"message"`
+	PreemptedPods []string `json:"preempted_pods,omitempty"`
 }
 
 // ============================================

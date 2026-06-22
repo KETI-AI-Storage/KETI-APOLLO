@@ -9,11 +9,17 @@ metadata:
   namespace: apollo
 data:
   # gRPC Service Endpoints
-  INSIGHT_SCOPE_ADDR: "insight-scope.apollo.svc.cluster.local:50051"
-  INSIGHT_TRACE_ADDR: "insight-trace.apollo.svc.cluster.local:50052"
+  INSIGHT_SCOPE_ADDR: "insight-scope.keti.svc.cluster.local:50054"
+  INSIGHT_TRACE_ADDR: "insight-trace.keti.svc.cluster.local:50052"
   SCHEDULING_POLICY_ENGINE_ADDR: "scheduling-policy-engine.apollo.svc.cluster.local:50054"
   NODE_RESOURCE_FORECASTER_ADDR: "node-resource-forecaster.apollo.svc.cluster.local:50055"
+  NODE_RESOURCE_FORECASTER_URL: "http://node-resource-forecaster.apollo.svc.cluster.local:8080"
   ORCHESTRATION_POLICY_ENGINE_ADDR: "orchestration-policy-engine.apollo.svc.cluster.local:50056"
+  POLICY_AGENT_URL: ""
+  POLICY_AGENT_ENABLED: "true"
+  POLICY_AGENT_HTTP_TIMEOUT_SECONDS: "5"
+  POLICY_AGENT_REQUEUE_AFTER_SECONDS: "30"
+  POLICY_GENERATOR_DISABLE_DUPLICATE_CHECK: "false"
 
   # External Services
   MANTA_GRPC_ADDR: "manta-grpc.keti.svc.cluster.local:50052"

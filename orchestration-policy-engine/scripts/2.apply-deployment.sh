@@ -13,8 +13,8 @@ if [ "$1" == "delete" ] || [ "$1" == "d" ]; then
     echo "================================"
     echo "Deleting Orchestration Policy Engine deployment..."
     echo "================================"
-    cd "$project_dir" || exit 1
-    make undeploy
+    kubectl delete -f "$project_dir/../deployments/orchestration-policy-engine.yaml" --ignore-not-found=true
+    kubectl delete deployment controller-manager -n system --ignore-not-found=true
 
     if [ $? -eq 0 ]; then
         echo "Deployment deleted successfully"
@@ -37,15 +37,15 @@ elif [ "$1" == "apply" ] || [ "$1" == "a" ]; then
         kubectl create namespace $namespace
     fi
 
-    cd "$project_dir" || exit 1
-    make deploy IMG="$IMG"
+    kubectl apply -f "$project_dir/../deployments/orchestration-policy-engine.yaml"
+    kubectl delete deployment controller-manager -n system --ignore-not-found=true
 
     if [ $? -eq 0 ]; then
         echo "Deployment applied successfully"
         echo ""
         echo "Checking pod status..."
         sleep 3
-        kubectl get pods -n $namespace -l control-plane=controller-manager
+        kubectl get pods -n $namespace -l app=orchestration-policy-engine
     else
         echo "Error: Deployment apply failed"
         exit 1

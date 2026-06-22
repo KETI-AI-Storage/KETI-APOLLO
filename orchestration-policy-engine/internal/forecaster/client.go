@@ -34,13 +34,24 @@ type CachedForecast struct {
 	FetchedAt time.Time
 }
 
-// NewClient 새로운 Forecaster 클라이언트 생성
-func NewClient(httpEndpoint, grpcEndpoint string) *Client {
+// NewClient는 Forecaster HTTP 클라이언트를 생성한다.
+//
+// Parameters:
+// - httpEndpoint: Forecaster HTTP 베이스 URL
+// - grpcEndpoint: gRPC 엔드포인트(미사용 시 빈 문자열)
+// - httpTimeout: HTTP 요청 타임아웃(0 이하면 10초)
+//
+// Returns:
+// - *Client: 초기화된 클라이언트
+func NewClient(httpEndpoint, grpcEndpoint string, httpTimeout time.Duration) *Client {
+	if httpTimeout <= 0 {
+		httpTimeout = 10 * time.Second
+	}
 	return &Client{
 		httpEndpoint: httpEndpoint,
 		grpcEndpoint: grpcEndpoint,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: httpTimeout,
 		},
 		thresholds:    DefaultThresholdConfig(),
 		forecastCache: make(map[string]*CachedForecast),
@@ -155,6 +166,23 @@ func (c *Client) ForecastCluster(ctx context.Context, horizons []int32, includeN
 	return &forecast, nil
 }
 
+// logPolicyRecommendationsDump은 PolicyRecommendation 배열을 JSON 한 줄로 남긴다.
+//
+// 운영 로그에서 policy_type·resource_type·horizon 조합을 코드 근거로 확인하기 위함이다.
+//
+// Parameters:
+// - nodeName: 대상 노드 이름
+// - source: 데이터 출처 식별자(http_policy_recommendations 또는 threshold_forecast_fallback)
+// - recs: 덤프할 권장 목록
+func (c *Client) logPolicyRecommendationsDump(nodeName, source string, recs []PolicyRecommendation) {
+	b, err := json.Marshal(recs)
+	if err != nil {
+		log.Printf("[Forecaster] recommendations dump marshal failed node=%s source=%s: %v", nodeName, source, err)
+		return
+	}
+	log.Printf("[Forecaster] recommendations dump node=%s source=%s json=%s", nodeName, source, string(b))
+}
+
 // AnalyzeAndRecommend 예측 결과 분석 및 정책 추천
 // 발표자료 기반: Multi-LightGBM 정책 결정 사용 (있으면), 없으면 기존 threshold 기반
 func (c *Client) AnalyzeAndRecommend(ctx context.Context, nodeName string) ([]PolicyRecommendation, error) {
@@ -162,12 +190,18 @@ func (c *Client) AnalyzeAndRecommend(ctx context.Context, nodeName string) ([]Po
 	recommendations, err := c.GetPolicyRecommendations(ctx, nodeName)
 	if err == nil && len(recommendations) > 0 {
 		log.Printf("[Forecaster] Using Multi-LightGBM recommendations for node %s: %d recommendations", nodeName, len(recommendations))
+		c.logPolicyRecommendationsDump(nodeName, "http_policy_recommendations", recommendations)
 		return recommendations, nil
 	}
 
 	// Fallback to threshold-based analysis
 	log.Printf("[Forecaster] Multi-LightGBM not available, using threshold-based analysis for node %s", nodeName)
-	return c.analyzeWithThresholds(ctx, nodeName)
+	recommendations, err = c.analyzeWithThresholds(ctx, nodeName)
+	if err != nil {
+		return nil, err
+	}
+	c.logPolicyRecommendationsDump(nodeName, "threshold_forecast_fallback", recommendations)
+	return recommendations, nil
 }
 
 // GetPolicyRecommendations Multi-LightGBM 정책 추천 조회 (발표자료 구현)

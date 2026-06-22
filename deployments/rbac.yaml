@@ -26,6 +26,10 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "nodes", "namespaces"]
   verbs: ["get", "list", "watch"]
+# ReplicaSet: PolicyGenerator가 Pod→ReplicaSet→Deployment 이름 해석 시 namespaced Get만 사용 (캐시 list/watch 불필요)
+- apiGroups: ["apps"]
+  resources: ["replicasets"]
+  verbs: ["get"]
 - apiGroups: [""]
   resources: ["pods/status"]
   verbs: ["get"]
@@ -45,6 +49,16 @@ rules:
 - apiGroups: [""]
   resources: ["configmaps"]
   verbs: ["get", "list", "watch"]
+# OrchestrationPolicy CRD access
+- apiGroups: ["apollo.keti.re.kr"]
+  resources: ["orchestrationpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apollo.keti.re.kr"]
+  resources: ["orchestrationpolicies/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["apollo.keti.re.kr"]
+  resources: ["orchestrationpolicies/finalizers"]
+  verbs: ["update"]
 ---
 # ClusterRole for Forecaster
 apiVersion: rbac.authorization.k8s.io/v1
@@ -60,6 +74,10 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get", "list", "watch"]
+# node-resource-forecaster: ClusterStateManager가 list_pod_for_all_namespaces로 Running Pod 집계
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
 ---
 # ClusterRoleBinding for Policy Engines
 apiVersion: rbac.authorization.k8s.io/v1

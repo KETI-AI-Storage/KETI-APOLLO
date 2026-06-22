@@ -64,6 +64,14 @@ spec:
                 default: false
                 description: 'AutoExecute 자동 실행 여부 (기본값: false)'
                 type: boolean
+              executionMode:
+                default: Immediate
+                description: 'ExecutionMode 실행 모드 (기본값: Immediate)'
+                enum:
+                - Immediate
+                - OnTargetCreated
+                - Continuous
+                type: string
               horizon:
                 description: 'Horizon 예측 시간 범위 (분 단위, 예: 30 = 30분 후)'
                 format: int32
@@ -107,8 +115,19 @@ spec:
                 - STORAGE_IO
                 - NETWORK
                 type: string
+              selector:
+                additionalProperties:
+                  type: string
+                description: Selector OnTargetCreated 매칭 시 사용할 라벨 선택자
+                type: object
               sourceNode:
                 description: SourceNode 소스 노드 (마이그레이션 출발지)
+                type: string
+              targetRunID:
+                description: TargetRunID OnTargetCreated 매칭 시 사용할 Run 식별자
+                type: string
+              targetStage:
+                description: TargetStage OnTargetCreated 매칭 시 사용할 Stage 식별자
                 type: string
               targetNamespace:
                 description: TargetNamespace 대상 네임스페이스
@@ -140,6 +159,9 @@ spec:
                 description: CompletedAt 실행 완료 시간
                 format: date-time
                 type: string
+              consumed:
+                description: Consumed 1회성 정책이 이미 소비되었는지 여부
+                type: boolean
               conditions:
                 description: Conditions 상태 조건들
                 items:
@@ -216,10 +238,34 @@ spec:
                 - Pending
                 - Approved
                 - Executing
+                - WaitingForTarget
+                - Applied
                 - Completed
                 - Failed
                 - Rejected
                 type: string
+              appliedTargets:
+                description: AppliedTargets 실제 적용 대상 이력
+                items:
+                  properties:
+                    appliedAt:
+                      description: AppliedAt 적용 시각
+                      format: date-time
+                      type: string
+                    kind:
+                      description: Kind 타깃 리소스 Kind
+                      type: string
+                    name:
+                      description: Name 타깃 리소스 이름
+                      type: string
+                    namespace:
+                      description: Namespace 타깃 리소스 네임스페이스
+                      type: string
+                    uid:
+                      description: UID 타깃 리소스 UID
+                      type: string
+                  type: object
+                type: array
               result:
                 description: Result 실행 결과 상세
                 type: string

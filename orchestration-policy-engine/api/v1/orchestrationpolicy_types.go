@@ -61,16 +61,28 @@ const (
 )
 
 // ExecutionPhase 실행 단계
-// +kubebuilder:validation:Enum=Pending;Approved;Executing;Completed;Failed;Rejected
+// +kubebuilder:validation:Enum=Pending;Approved;Executing;WaitingForTarget;Applied;Completed;Failed;Rejected
 type ExecutionPhase string
 
 const (
-	PhasePending   ExecutionPhase = "Pending"   // 생성됨, 승인 대기
-	PhaseApproved  ExecutionPhase = "Approved"  // 승인됨, 실행 대기
-	PhaseExecuting ExecutionPhase = "Executing" // 실행 중
-	PhaseCompleted ExecutionPhase = "Completed" // 완료
-	PhaseFailed    ExecutionPhase = "Failed"    // 실패
-	PhaseRejected  ExecutionPhase = "Rejected"  // 거부됨
+	PhasePending          ExecutionPhase = "Pending"          // 생성됨, 승인 대기
+	PhaseApproved         ExecutionPhase = "Approved"         // 승인됨, 실행 대기
+	PhaseExecuting        ExecutionPhase = "Executing"        // 실행 중
+	PhaseWaitingForTarget ExecutionPhase = "WaitingForTarget" // 타깃 생성 대기
+	PhaseApplied          ExecutionPhase = "Applied"          // 1회 적용 완료
+	PhaseCompleted        ExecutionPhase = "Completed"        // 완료
+	PhaseFailed           ExecutionPhase = "Failed"           // 실패
+	PhaseRejected         ExecutionPhase = "Rejected"         // 거부됨
+)
+
+// ExecutionMode 정책 실행 모드
+// +kubebuilder:validation:Enum=Immediate;OnTargetCreated;Continuous
+type ExecutionMode string
+
+const (
+	ExecutionModeImmediate       ExecutionMode = "Immediate"       // 현재 대상에 즉시 적용
+	ExecutionModeOnTargetCreated ExecutionMode = "OnTargetCreated" // 새 대상 생성 시 1회 적용
+	ExecutionModeContinuous      ExecutionMode = "Continuous"      // 반복 적용
 )
 
 // ============================================================
@@ -126,6 +138,23 @@ type OrchestrationPolicySpec struct {
 	// +optional
 	AutoExecute bool `json:"autoExecute,omitempty"`
 
+	// ExecutionMode 실행 모드 (기본값: Immediate)
+	// +kubebuilder:default=Immediate
+	// +optional
+	ExecutionMode ExecutionMode `json:"executionMode,omitempty"`
+
+	// TargetRunID OnTargetCreated 매칭 시 사용할 Run 식별자
+	// +optional
+	TargetRunID string `json:"targetRunID,omitempty"`
+
+	// TargetStage OnTargetCreated 매칭 시 사용할 Stage 식별자
+	// +optional
+	TargetStage string `json:"targetStage,omitempty"`
+
+	// Selector OnTargetCreated 매칭 시 사용할 라벨 선택자
+	// +optional
+	Selector map[string]string `json:"selector,omitempty"`
+
 	// PriorityScore 우선순위 점수 (높을수록 중요)
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=100
@@ -168,11 +197,38 @@ type OrchestrationPolicyStatus struct {
 	// +optional
 	Result string `json:"result,omitempty"`
 
+	// Consumed 1회성 정책이 이미 소비되었는지 여부
+	// +optional
+	Consumed bool `json:"consumed,omitempty"`
+
+	// AppliedTargets 실제 적용 대상 이력
+	// +optional
+	AppliedTargets []TargetReference `json:"appliedTargets,omitempty"`
+
 	// Conditions 상태 조건들
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// TargetReference는 정책이 실제로 적용된 타깃의 식별 정보를 담는다.
+type TargetReference struct {
+	// UID 타깃 리소스 UID
+	UID string `json:"uid,omitempty"`
+
+	// Kind 타깃 리소스 Kind
+	Kind string `json:"kind,omitempty"`
+
+	// Name 타깃 리소스 이름
+	Name string `json:"name,omitempty"`
+
+	// Namespace 타깃 리소스 네임스페이스
+	Namespace string `json:"namespace,omitempty"`
+
+	// AppliedAt 적용 시각
+	// +optional
+	AppliedAt *metav1.Time `json:"appliedAt,omitempty"`
 }
 
 // ============================================================

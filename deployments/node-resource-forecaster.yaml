@@ -24,11 +24,16 @@ spec:
       serviceAccountName: apollo-forecaster
       containers:
       - name: node-resource-forecaster
-        image: docker.io/library/node-resource-forecaster:latest
-        imagePullPolicy: Never
+        image: ketidevit2/node-resource-forecaster:operational-v2
+        imagePullPolicy: Always
+        envFrom:
+        - configMapRef:
+            name: orchestration-policy-engine-config
         ports:
         - containerPort: 50055
           name: grpc
+        - containerPort: 8080
+          name: http
         - containerPort: 9091
           name: metrics
         env:
@@ -43,7 +48,7 @@ spec:
         - name: HISTORY_RETENTION_HOURS
           value: "24"
         - name: INSIGHT_HUB_ADDR
-          value: "insight-hub.apollo.svc.cluster.local:50056"
+          value: "insight-hub.keti.svc.cluster.local:50056"
         - name: INSIGHT_HUB_SYNC_INTERVAL_SEC
           value: "30"
         resources:
@@ -95,6 +100,9 @@ spec:
   - port: 50055
     targetPort: 50055
     name: grpc
+  - port: 8080
+    targetPort: 8080
+    name: http
   - port: 9091
     targetPort: 9091
     name: metrics

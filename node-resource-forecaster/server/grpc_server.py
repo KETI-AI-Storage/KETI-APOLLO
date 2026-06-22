@@ -389,15 +389,27 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
         logger.info("Node Resource Forecaster initialized (LSTM-Attention + Multi-LightGBM)")
 
         # Pull history from Insight Hub when INSIGHT_HUB_ADDR is set (insight-scope → hub → forecaster)
+        hub_addr = os.environ.get("INSIGHT_HUB_ADDR", "").strip()
+        logger.info("[forecaster.init] entering hub sync init: INSIGHT_HUB_ADDR='%s'", hub_addr)
         try:
-            from hub_sync import start_hub_sync_if_configured
+            from server.hub_sync import start_hub_sync_if_configured
+            logger.info("[forecaster.init] imported hub_sync.start_hub_sync_if_configured successfully")
             self._hub_sync = start_hub_sync_if_configured(
                 self.node_history,
                 self.history_lock,
                 self.max_history_size,
             )
+            logger.info(
+                "[forecaster.init] hub sync init completed: INSIGHT_HUB_ADDR='%s', sync_started=%s",
+                hub_addr,
+                self._hub_sync is not None,
+            )
         except Exception as e:
-            logger.warning("Insight Hub sync not started: %s", e)
+            logger.exception(
+                "[forecaster.init] hub sync init failed: INSIGHT_HUB_ADDR='%s', reason=%s",
+                hub_addr,
+                e,
+            )
             self._hub_sync = None
 
     def ForecastNodeResources(self, request, context):

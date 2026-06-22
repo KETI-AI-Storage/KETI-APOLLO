@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 NAMESPACE="apollo"
-LABEL="control-plane=controller-manager"
+LABEL="app=orchestration-policy-engine"
 
 echo "================================"
 echo "Tracing Orchestration Policy Engine logs"

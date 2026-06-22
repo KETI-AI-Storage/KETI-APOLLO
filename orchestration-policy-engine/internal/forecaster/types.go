@@ -8,7 +8,7 @@ import "time"
 
 // ForecastNodeRequest 노드 리소스 예측 요청
 type ForecastNodeRequest struct {
-	NodeName               string  `json:"node_name"`
+	NodeName                string  `json:"node_name"`
 	ForecastHorizonsMinutes []int32 `json:"forecast_horizons_minutes"` // e.g., [5, 10, 30, 60]
 }
 
@@ -27,7 +27,7 @@ type ForecastNodeResponse struct {
 
 // ForecastClusterResponse 클러스터 예측 응답
 type ForecastClusterResponse struct {
-	ClusterForecasts []ResourceForecast           `json:"cluster_forecasts"`
+	ClusterForecasts []ResourceForecast            `json:"cluster_forecasts"`
 	NodeForecasts    map[string]NodeForecastResult `json:"node_forecasts"`
 }
 
@@ -39,13 +39,13 @@ type NodeForecastResult struct {
 
 // ResourceForecast 리소스 예측 결과
 type ResourceForecast struct {
-	HorizonMinutes                 int32   `json:"horizon_minutes"`
-	PredictedCPUUtilization        float64 `json:"predicted_cpu_utilization"`
-	PredictedMemoryUtilization     float64 `json:"predicted_memory_utilization"`
-	PredictedGPUUtilization        float64 `json:"predicted_gpu_utilization"`
-	PredictedStorageIOUtilization  float64 `json:"predicted_storage_io_utilization"`
-	ConfidenceIntervalLower        float64 `json:"confidence_interval_lower"`
-	ConfidenceIntervalUpper        float64 `json:"confidence_interval_upper"`
+	HorizonMinutes                int32   `json:"horizon_minutes"`
+	PredictedCPUUtilization       float64 `json:"predicted_cpu_utilization"`
+	PredictedMemoryUtilization    float64 `json:"predicted_memory_utilization"`
+	PredictedGPUUtilization       float64 `json:"predicted_gpu_utilization"`
+	PredictedStorageIOUtilization float64 `json:"predicted_storage_io_utilization"`
+	ConfidenceIntervalLower       float64 `json:"confidence_interval_lower"`
+	ConfidenceIntervalUpper       float64 `json:"confidence_interval_upper"`
 }
 
 // HealthCheckResponse 헬스체크 응답
@@ -59,13 +59,13 @@ type HealthCheckResponse struct {
 
 // PolicyRecommendation 정책 추천 (예측 기반)
 type PolicyRecommendation struct {
-	NodeName       string  `json:"node_name"`
-	PolicyType     string  `json:"policy_type"`     // migration, scaling, provisioning, etc.
-	Urgency        string  `json:"urgency"`         // LOW, MEDIUM, HIGH, CRITICAL
-	Probability    int32   `json:"probability"`     // 0-100
-	ResourceType   string  `json:"resource_type"`   // CPU, MEMORY, GPU, STORAGE_IO
-	Reason         string  `json:"reason"`
-	HorizonMinutes int32   `json:"horizon_minutes"`
+	NodeName       string `json:"node_name"`
+	PolicyType     string `json:"policy_type"`   // migration, scaling, provisioning, etc.
+	Urgency        string `json:"urgency"`       // LOW, MEDIUM, HIGH, CRITICAL
+	Probability    int32  `json:"probability"`   // 0-100
+	ResourceType   string `json:"resource_type"` // CPU, MEMORY, GPU, STORAGE_IO
+	Reason         string `json:"reason"`
+	HorizonMinutes int32  `json:"horizon_minutes"`
 
 	// 상세 정보
 	CurrentUtilization   float64 `json:"current_utilization"`
@@ -86,15 +86,18 @@ type ThresholdConfig struct {
 }
 
 // DefaultThresholdConfig 기본 임계값
+//
+// LSTM 정규화 예측이 대개 0.45~0.55 구간에 몰리는 배포에서도 권장이 나오도록
+// warning을 낮게 둔다. 운영 튜닝은 LoadThresholdConfigFromEnv + ConfigMap으로 조정한다.
 func DefaultThresholdConfig() ThresholdConfig {
 	return ThresholdConfig{
-		CPUWarning:      0.70,
+		CPUWarning:      0.42,
 		CPUCritical:     0.85,
-		MemoryWarning:   0.75,
+		MemoryWarning:   0.42,
 		MemoryCritical:  0.90,
-		GPUWarning:      0.80,
+		GPUWarning:      0.42,
 		GPUCritical:     0.95,
-		StorageWarning:  0.70,
+		StorageWarning:  0.28,
 		StorageCritical: 0.85,
 	}
 }
@@ -106,19 +109,19 @@ func DefaultThresholdConfig() ThresholdConfig {
 
 // OrchestrationPolicyResponse Multi-LightGBM 정책 결정 응답
 type OrchestrationPolicyResponse struct {
-	NodeName   string           `json:"node_name"`
-	Timestamp  int64            `json:"timestamp"`
-	Decisions  []PolicyDecision `json:"decisions"`
+	NodeName    string            `json:"node_name"`
+	Timestamp   int64             `json:"timestamp"`
+	Decisions   []PolicyDecision  `json:"decisions"`
 	Predictions PolicyPredictions `json:"predictions"`
 }
 
 // PolicyDecision 단일 정책 결정 (7개 Task 중 하나)
 type PolicyDecision struct {
-	TaskName    string                 `json:"task_name"`    // node_health, autoscale, migration, caching, load_balancing, provisioning, storage_tiering
-	Decision    string                 `json:"decision"`     // YES/NO or NORMAL/STRESSED/CRITICAL
-	Probability float64                `json:"probability"`  // 0.0 ~ 1.0
-	Urgency     string                 `json:"urgency"`      // LOW, MEDIUM, HIGH, CRITICAL
-	Confidence  float64                `json:"confidence"`   // 0.0 ~ 1.0
+	TaskName    string                 `json:"task_name"`   // node_health, autoscale, migration, caching, load_balancing, provisioning, storage_tiering
+	Decision    string                 `json:"decision"`    // YES/NO or NORMAL/STRESSED/CRITICAL
+	Probability float64                `json:"probability"` // 0.0 ~ 1.0
+	Urgency     string                 `json:"urgency"`     // LOW, MEDIUM, HIGH, CRITICAL
+	Confidence  float64                `json:"confidence"`  // 0.0 ~ 1.0
 	Reason      string                 `json:"reason"`
 	Parameters  map[string]interface{} `json:"parameters"`
 }

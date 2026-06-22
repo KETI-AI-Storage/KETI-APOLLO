@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strconv"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -29,6 +30,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -38,10 +40,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	apollov1 "orchestration-policy-engine/api/v1"
+	"orchestration-policy-engine/internal/config"
 	"orchestration-policy-engine/internal/controller"
 	"orchestration-policy-engine/internal/forecaster"
 	"orchestration-policy-engine/internal/generator"
 	"orchestration-policy-engine/internal/operator"
+	"orchestration-policy-engine/internal/policyagent"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -65,8 +69,19 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
+func getEnvBoolOrDefault(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if b, err := strconv.ParseBool(value); err == nil {
+			return b
+		}
+	}
+	return defaultValue
+}
+
 // nolint:gocyclo
 func main() {
+	runtimeCfg := config.LoadPolicyEngineRuntime()
+
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
@@ -83,6 +98,8 @@ func main() {
 	var policyCheckInterval time.Duration
 	var autoExecute bool
 	var enablePolicyGenerator bool
+	var policyAgentURL string
+	var policyAgentEnabled bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -112,12 +129,17 @@ func main() {
 	flag.StringVar(&policyNamespace, "policy-namespace",
 		getEnvOrDefault("POLICY_NAMESPACE", "apollo"),
 		"Namespace for generated policies")
-	flag.DurationVar(&policyCheckInterval, "policy-check-interval", 60*time.Second,
-		"Interval for policy generation check")
-	flag.BoolVar(&autoExecute, "auto-execute", false,
+	flag.DurationVar(&policyCheckInterval, "policy-check-interval", runtimeCfg.PolicyCheckInterval,
+		"Interval for policy generation check (ConfigMap: POLICY_GENERATOR_CHECK_INTERVAL_SECONDS)")
+	flag.BoolVar(&autoExecute, "auto-execute", getEnvBoolOrDefault("AUTO_EXECUTE", true),
 		"Auto-execute generated policies without manual approval")
 	flag.BoolVar(&enablePolicyGenerator, "enable-policy-generator", true,
 		"Enable automatic policy generation from Forecaster predictions")
+	flag.StringVar(&policyAgentURL, "policy-agent-url",
+		getEnvOrDefault("POLICY_AGENT_URL", ""),
+		"Policy Agent HTTP URL. Empty value uses local rule-based evaluation")
+	flag.BoolVar(&policyAgentEnabled, "policy-agent-enabled", getEnvBoolOrDefault("POLICY_AGENT_ENABLED", true),
+		"Enable Policy Agent evaluation before auto-approval")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -193,7 +215,20 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+	if runtimeCfg.KubeClientQPS > 0 {
+		cfg.QPS = runtimeCfg.KubeClientQPS
+	}
+	if runtimeCfg.KubeClientBurst > 0 {
+		cfg.Burst = runtimeCfg.KubeClientBurst
+	}
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		setupLog.Error(err, "unable to create Kubernetes clientset for policy generator")
+		os.Exit(1)
+	}
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -224,19 +259,57 @@ func main() {
 	setupLog.Info("║     Orchestration Policy Engine - Apollo Integration          ║")
 	setupLog.Info("╚═══════════════════════════════════════════════════════════════╝")
 
-	// Forecaster 클라이언트 초기화
-	forecasterClient := forecaster.NewClient(forecasterURL, "")
-	setupLog.Info("Forecaster client initialized", "url", forecasterURL)
+	// Forecaster 클라이언트 초기화 (임계치: 기본값 + FORECASTER_* 환경변수/ConfigMap)
+	forecasterClient := forecaster.NewClient(forecasterURL, "", runtimeCfg.ForecasterHTTPTimeout)
+	forecasterClient.SetThresholds(forecaster.LoadThresholdConfigFromEnv())
+	setupLog.Info("Forecaster client initialized", "url", forecasterURL, "httpTimeout", runtimeCfg.ForecasterHTTPTimeout)
 
 	// Operator 클라이언트 초기화
-	operatorClient := operator.NewClient(orchestratorURL)
-	setupLog.Info("Operator client initialized", "url", orchestratorURL)
+	operatorClient := operator.NewClient(orchestratorURL, runtimeCfg.OperatorHTTPTimeout)
+	setupLog.Info("Operator client initialized", "url", orchestratorURL, "httpTimeout", runtimeCfg.OperatorHTTPTimeout)
+
+	// Policy Agent 클라이언트 초기화
+	policyAgentClient := policyagent.NewClient(
+		policyAgentURL,
+		runtimeCfg.PolicyAgentHTTPTimeout,
+		runtimeCfg.PolicyAgentRequeueAfter,
+	)
+	setupLog.Info("Policy Agent initialized",
+		"enabled", policyAgentEnabled,
+		"url", policyAgentURL,
+		"httpTimeout", runtimeCfg.PolicyAgentHTTPTimeout,
+		"requeueAfter", runtimeCfg.PolicyAgentRequeueAfter)
+
+	execTimeout := 30 * time.Minute
+	if v := os.Getenv("POLICY_EXECUTION_TIMEOUT_SECONDS"); v != "" {
+		if sec, err := strconv.Atoi(v); err == nil && sec > 0 {
+			execTimeout = time.Duration(sec) * time.Second
+		}
+	}
+	syncGrace := 45 * time.Second
+	if v := os.Getenv("POLICY_SYNC_COMPLETE_AFTER_SECONDS"); v != "" {
+		if sec, err := strconv.Atoi(v); err == nil && sec >= 0 {
+			syncGrace = time.Duration(sec) * time.Second
+		}
+	}
 
 	// 컨트롤러 설정 (OperatorClient 포함)
 	if err := (&controller.OrchestrationPolicyReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		OperatorClient: operatorClient,
+		Client:                            mgr.GetClient(),
+		Scheme:                            mgr.GetScheme(),
+		OperatorClient:                    operatorClient,
+		PolicyAgentClient:                 policyAgentClient,
+		PolicyAgentEnabled:                policyAgentEnabled,
+		PolicyAgentRequeueAfter:           runtimeCfg.PolicyAgentRequeueAfter,
+		ExecutionTimeout:                  execTimeout,
+		SyncCompleteGrace:                 syncGrace,
+		MigrationAPITimeoutSec:            runtimeCfg.MigrationAPITimeoutSec,
+		MigrationMaxConsecutive404:        runtimeCfg.MigrationMaxConsecutive404,
+		MigrationMaxConsecutivePollErrors: runtimeCfg.MigrationMaxConsecutivePollErrors,
+		SyncMaxConsecutive404:             runtimeCfg.SyncMaxConsecutive404,
+		SyncMaxConsecutiveGETErrors:       runtimeCfg.SyncMaxConsecutiveGETErrors,
+		ProvisioningStrictReadyOnly:       runtimeCfg.ProvisioningStrictReadyOnly,
+		MaxConcurrentReconciles:           runtimeCfg.MaxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "OrchestrationPolicy")
 		os.Exit(1)
@@ -246,13 +319,14 @@ func main() {
 	// PolicyGenerator 시작 (백그라운드)
 	if enablePolicyGenerator {
 		genConfig := generator.Config{
-			Namespace:     policyNamespace,
-			CheckInterval: policyCheckInterval,
-			PolicyTTL:     10 * time.Minute,
-			AutoExecute:   autoExecute,
-			ForecasterURL: forecasterURL,
+			Namespace:             policyNamespace,
+			CheckInterval:         policyCheckInterval,
+			PolicyTTL:             runtimeCfg.PolicyTTL,
+			AutoExecute:           autoExecute,
+			ForecasterURL:         forecasterURL,
+			DisableDuplicateCheck: runtimeCfg.DisableDuplicatePolicyCheck,
 		}
-		policyGenerator := generator.NewPolicyGenerator(mgr.GetClient(), forecasterClient, genConfig)
+		policyGenerator := generator.NewPolicyGenerator(mgr.GetClient(), clientset, forecasterClient, genConfig)
 
 		// Manager의 Runnable로 등록하여 생명주기 관리
 		if err := mgr.Add(&policyGeneratorRunnable{generator: policyGenerator}); err != nil {
@@ -262,9 +336,32 @@ func main() {
 		setupLog.Info("Policy Generator registered",
 			"namespace", policyNamespace,
 			"checkInterval", policyCheckInterval,
-			"autoExecute", autoExecute)
+			"autoExecute", autoExecute,
+			"disableDuplicateCheck", runtimeCfg.DisableDuplicatePolicyCheck)
 	} else {
 		setupLog.Info("Policy Generator disabled")
+	}
+
+	// 종료 정책 GC 시작 (백그라운드, leader 전용)
+	if runtimeCfg.TerminatedPolicyGCEnabled {
+		policyGC := &controller.TerminatedPolicyGC{
+			Client:    mgr.GetClient(),
+			Namespace: policyNamespace,
+			Interval:  runtimeCfg.TerminatedPolicyGCInterval,
+			TTL:       runtimeCfg.TerminatedPolicyTTL,
+			BatchMax:  runtimeCfg.TerminatedPolicyGCBatchMax,
+		}
+		if err := mgr.Add(policyGC); err != nil {
+			setupLog.Error(err, "unable to add terminated policy GC to manager")
+			os.Exit(1)
+		}
+		setupLog.Info("Terminated policy GC registered",
+			"namespace", policyNamespace,
+			"interval", runtimeCfg.TerminatedPolicyGCInterval,
+			"ttl", runtimeCfg.TerminatedPolicyTTL,
+			"batchMax", runtimeCfg.TerminatedPolicyGCBatchMax)
+	} else {
+		setupLog.Info("Terminated policy GC disabled")
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

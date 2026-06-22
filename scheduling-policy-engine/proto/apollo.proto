@@ -166,12 +166,57 @@ message SchedulingPolicy {
   // Reasoning (for debugging/logging)
   string reason = 12;
 
-  // Timestamp
-  google.protobuf.Timestamp created_at = 13;
-  google.protobuf.Timestamp expires_at = 14;
-
   // Plugin weights for dynamic scoring (APOLLO -> Scheduler)
-  PluginWeights plugin_weights = 15;
+  // NOTE: field number 13 must match the Go scheduler's canonical proto
+  // (ai-storage-scheduler/internal/apollo/apollo.pb.go). Previously this was
+  // 15 (with created_at=13/expires_at=14), which broke wire compatibility so
+  // the scheduler never received PPO weights. Those timestamp fields are
+  // unused and now reserved.
+  PluginWeights plugin_weights = 13;
+
+  // Fields 14-19 reserved (created_at/expires_at removed; kept reserved to
+  // avoid accidental reuse with a different meaning than the Go side).
+  reserved 14, 15, 16, 17, 18, 19;
+
+  // Workload signature info echoed back to the scheduler (field 20 matches Go).
+  // Carries dataset_name / data_locations used for data-locality reward.
+  WorkloadSignatureInfo workload_signature = 20;
+}
+
+// PreprocessingType classifies the preprocessing stage of an AI/ML workload.
+// Field values MUST match the Go scheduler's canonical proto
+// (ai-storage-scheduler/internal/apollo/apollo.pb.go).
+enum PreprocessingType {
+  PREPROCESSING_TYPE_UNKNOWN = 0;
+  PREPROCESSING_TYPE_AUGMENTATION = 1;
+  PREPROCESSING_TYPE_TRANSFORMATION = 2;
+  PREPROCESSING_TYPE_FILTERING = 3;
+  PREPROCESSING_TYPE_AGGREGATION = 4;
+  PREPROCESSING_TYPE_SHARDING = 5;
+  PREPROCESSING_TYPE_NORMALIZATION = 6;
+  PREPROCESSING_TYPE_FEATURE_EXTRACT = 7;
+}
+
+// WorkloadSignatureInfo is the signature APOLLO echoes back to the scheduler
+// inside SchedulingPolicy. Field names/numbers MUST match the Go scheduler's
+// canonical proto so the response is wire-compatible. This is distinct from
+// the WorkloadSignature message that Insight Trace reports INTO APOLLO.
+message WorkloadSignatureInfo {
+  WorkloadType workload_type = 1;
+  PipelineStage current_stage = 2;
+  IOPattern io_pattern = 3;
+  double confidence = 4;
+  string framework = 5;
+  string framework_version = 6;
+  bool is_gpu_workload = 7;
+  bool is_distributed = 8;
+  bool is_pipeline = 9;
+  string pipeline_step = 10;
+  int32 estimated_batch_size = 11;
+  PreprocessingType preprocessing_type = 12;
+  string dataset_name = 13;
+  repeated string data_locations = 14;
+  repeated string cached_on_nodes = 15;
 }
 
 // PluginWeights contains dynamic weights for KETI scoring plugins

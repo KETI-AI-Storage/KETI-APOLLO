@@ -1,4 +1,45 @@
 # ============================================
+# Orchestration Policy Engine — 임계치·실행 타임아웃 (ConfigMap → env)
+# ============================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestration-policy-engine-config
+  namespace: apollo
+data:
+  FORECASTER_CPU_WARNING: "0.32" # 70%
+  FORECASTER_CPU_CRITICAL: "0.55" # 85%
+  FORECASTER_MEMORY_WARNING: "0.32" # 70%
+  FORECASTER_MEMORY_CRITICAL: "0.60" # 90%
+  FORECASTER_GPU_WARNING: "0.42" # 80%
+  FORECASTER_GPU_CRITICAL: "0.95" 
+  FORECASTER_STORAGE_WARNING: "0.28"
+  FORECASTER_STORAGE_CRITICAL: "0.85" # 85%
+  POLICY_EXECUTION_TIMEOUT_SECONDS: "900" # 15분
+  POLICY_SYNC_COMPLETE_AFTER_SECONDS: "45"
+  POLICY_GENERATOR_CHECK_INTERVAL_SECONDS: "60"
+  POLICY_GENERATOR_TTL_SECONDS: "600"
+  MIGRATION_API_TIMEOUT_SECONDS: "600"
+  FORECASTER_HTTP_TIMEOUT_SECONDS: "10"
+  OPERATOR_HTTP_TIMEOUT_SECONDS: "30"
+  POLICY_AGENT_URL: ""
+  POLICY_AGENT_ENABLED: "true"
+  POLICY_AGENT_HTTP_TIMEOUT_SECONDS: "5"
+  POLICY_AGENT_REQUEUE_AFTER_SECONDS: "30"
+  POLICY_GENERATOR_DISABLE_DUPLICATE_CHECK: "false"
+  OPERATOR_HTTP_MAX_RETRIES: "2"
+  OPERATOR_HTTP_RETRY_BACKOFF_MS: "300"
+  KUBE_CLIENT_QPS: "20"
+  KUBE_CLIENT_BURST: "40"
+  POLICY_MAX_CONCURRENT_RECONCILES: "1"
+  POLICY_MIGRATION_MAX_CONSECUTIVE_404: "5"
+  POLICY_MIGRATION_MAX_CONSECUTIVE_POLL_ERRORS: "10"
+  POLICY_SYNC_MAX_CONSECUTIVE_404: "5"
+  POLICY_SYNC_MAX_CONSECUTIVE_GET_ERRORS: "15"
+  # "true"이면 프로비저닝은 Operator status=ready일 때만 Completed (운영 강화)
+  POLICY_PROVISIONING_STRICT_READY_ONLY: "false"
+---
+# ============================================
 # Orchestration Policy Engine Deployment
 # DQN/Actor-Critic 기반 오케스트레이션 정책 엔진
 # ============================================
@@ -24,26 +65,28 @@ spec:
       serviceAccountName: apollo-policy-engine
       containers:
       - name: orchestration-policy-engine
-        image: docker.io/library/orchestration-policy-engine:latest
+        image: orchestration-policy-engine:latest
         imagePullPolicy: Never
+        envFrom:
+        - configMapRef:
+            name: orchestration-policy-engine-config
         ports:
         - containerPort: 50056
           name: grpc
         - containerPort: 9092
           name: metrics
         env:
-        - name: GRPC_PORT
-          value: "50056"
+        - name: FORECASTER_URL
+          value: "http://node-resource-forecaster.apollo.svc.cluster.local:8080"
+        - name: ORCHESTRATOR_URL
+          value: "http://ai-storage-orchestrator.kube-system.svc.cluster.local:8080"
+        - name: POLICY_NAMESPACE
+          value: "apollo"
         - name: MODEL_PATH
           value: "/models/dqn_orchestrator.pt"
-        - name: LOG_LEVEL
-          value: "INFO"
-        - name: INSIGHT_SCOPE_ADDR
-          value: "insight-scope.apollo.svc.cluster.local:50051"
-        - name: FORECASTER_ADDR
-          value: "node-resource-forecaster.apollo.svc.cluster.local:50055"
-        - name: MANTA_ADDR
-          value: "manta-grpc.keti.svc.cluster.local:50052"
+        args:
+        - --auto-execute=true
+        - --enable-policy-generator=true
         resources:
           requests:
             cpu: "500m"
@@ -55,13 +98,15 @@ spec:
         - name: model-storage
           mountPath: /models
         livenessProbe:
-          tcpSocket:
-            port: 50056
+          httpGet:
+            path: /healthz
+            port: 8081
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
-          tcpSocket:
-            port: 50056
+          httpGet:
+            path: /readyz
+            port: 8081
           initialDelaySeconds: 10
           periodSeconds: 5
       volumes:

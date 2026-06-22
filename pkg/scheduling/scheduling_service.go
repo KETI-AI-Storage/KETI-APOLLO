@@ -127,31 +127,185 @@ func (s *SchedulingPolicyService) GetSchedulingPolicy(ctx context.Context, req *
 	return policy, nil
 }
 
-// ReportSchedulingResult receives scheduling result feedback
+// ReportSchedulingResult receives scheduling result feedback and calculates reward
 func (s *SchedulingPolicyService) ReportSchedulingResult(ctx context.Context, result *SchedulingResult) (*ReportResponse, error) {
 	s.stats.TotalResultReports++
 
+	key := result.PodNamespace + "/" + result.PodName
+
+	// Get cached policy and workload signature for reward calculation
+	s.cacheMux.RLock()
+	cachedPolicy := s.policyCache[key]
+	s.cacheMux.RUnlock()
+
+	// Get workload signature and cluster insights for reward calculation
+	sig := s.insightService.GetWorkloadSignature(result.PodNamespace, result.PodName)
+	insights := s.insightService.GetAllClusterInsights()
+	nodeInsight := insights[result.ScheduledNode]
+
+	// Calculate reward based on actual metrics
+	reward := s.calculateMetricsBasedReward(result, cachedPolicy, sig, nodeInsight)
+
 	if result.Success {
 		s.stats.SuccessfulSchedules++
-		log.Printf("[SchedulingPolicy] Scheduling succeeded: pod=%s/%s -> node=%s (duration=%dms)",
-			result.PodNamespace, result.PodName, result.ScheduledNode, result.SchedulingDurationMs)
+		log.Printf("[SchedulingPolicy] Scheduling succeeded: pod=%s/%s -> node=%s (duration=%dms, reward=%.3f)",
+			result.PodNamespace, result.PodName, result.ScheduledNode, result.SchedulingDurationMs, reward)
 	} else {
 		s.stats.FailedSchedules++
-		log.Printf("[SchedulingPolicy] Scheduling failed: pod=%s/%s reason=%s",
-			result.PodNamespace, result.PodName, result.FailureReason)
+		log.Printf("[SchedulingPolicy] Scheduling failed: pod=%s/%s reason=%s (reward=%.3f)",
+			result.PodNamespace, result.PodName, result.FailureReason, reward)
 	}
 
 	// Remove from cache after scheduling
-	key := result.PodNamespace + "/" + result.PodName
 	s.cacheMux.Lock()
 	delete(s.policyCache, key)
 	s.cacheMux.Unlock()
 
 	return &ReportResponse{
 		Success:   true,
-		Message:   "result recorded",
+		Message:   fmt.Sprintf("result recorded, reward=%.3f", reward),
 		RequestID: result.RequestID,
 	}, nil
+}
+
+// calculateMetricsBasedReward calculates reward based on actual insight-scope metrics
+func (s *SchedulingPolicyService) calculateMetricsBasedReward(
+	result *SchedulingResult,
+	cachedPolicy *types.SchedulingPolicy,
+	sig *types.WorkloadSignature,
+	nodeInsight *types.ClusterInsight,
+) float64 {
+	// Base reward for successful/failed scheduling
+	if !result.Success {
+		return -1.0 // Penalty for failed scheduling
+	}
+
+	reward := 0.5 // Base success reward
+
+	// 1. Node preference match (0 ~ 0.3)
+	// Check if scheduled node was in APOLLO's recommended nodes
+	if cachedPolicy != nil {
+		for i, pref := range cachedPolicy.NodePreferences {
+			if pref.NodeName == result.ScheduledNode {
+				// Higher reward for higher-ranked preference
+				preferenceBonus := 0.3 * float64(len(cachedPolicy.NodePreferences)-i) / float64(len(cachedPolicy.NodePreferences))
+				reward += preferenceBonus
+				log.Printf("[Reward] Node preference match: node=%s, rank=%d, bonus=%.3f",
+					result.ScheduledNode, i+1, preferenceBonus)
+				break
+			}
+		}
+	}
+
+	// 2. Resource utilization match (0 ~ 0.3)
+	// Reward for scheduling to nodes with available resources (from insight-scope)
+	if nodeInsight != nil && nodeInsight.NodeResources != nil {
+		res := nodeInsight.NodeResources
+
+		// CPU availability reward
+		cpuAvailRatio := res.CPUAvailableCores / res.CPUAllocatableCores
+		if cpuAvailRatio > 0.3 {
+			reward += 0.1 * cpuAvailRatio
+		}
+
+		// Memory availability reward
+		memAvailRatio := float64(res.MemoryAvailableBytes) / float64(res.MemoryAllocatableBytes)
+		if memAvailRatio > 0.3 {
+			reward += 0.1 * memAvailRatio
+		}
+
+		// GPU availability for GPU workloads
+		if sig != nil && sig.IsGPUWorkload && res.GPUAvailable > 0 {
+			reward += 0.1
+			log.Printf("[Reward] GPU available on node: bonus=0.1")
+		}
+
+		log.Printf("[Reward] Resource availability: CPU=%.2f%%, Memory=%.2f%%, bonus=%.3f",
+			cpuAvailRatio*100, memAvailRatio*100, 0.1*cpuAvailRatio+0.1*memAvailRatio)
+	}
+
+	// 3. Storage performance match (0 ~ 0.2)
+	// Check if node's storage matches workload I/O requirements
+	if nodeInsight != nil && sig != nil && cachedPolicy != nil && cachedPolicy.StorageRequirements != nil {
+		storageReward := s.calculateStorageReward(nodeInsight, cachedPolicy.StorageRequirements)
+		reward += storageReward
+		log.Printf("[Reward] Storage performance: bonus=%.3f", storageReward)
+	}
+
+	// 4. CSD availability for I/O intensive workloads (0 ~ 0.1)
+	if nodeInsight != nil && sig != nil {
+		if sig.IOPattern == types.IOPatternReadHeavy || sig.IOPattern == types.IOPatternWriteHeavy {
+			for _, csd := range nodeInsight.CSDDevices {
+				if csd.IsAvailable && csd.ComputeUtilization < 0.7 {
+					reward += 0.1
+					log.Printf("[Reward] CSD available for I/O workload: bonus=0.1")
+					break
+				}
+			}
+		}
+	}
+
+	// 5. Scheduling latency bonus/penalty (-0.1 ~ 0.1)
+	if result.SchedulingDurationMs < 50 {
+		reward += 0.1 // Fast scheduling
+	} else if result.SchedulingDurationMs < 100 {
+		reward += 0.05 // Good scheduling
+	} else if result.SchedulingDurationMs > 500 {
+		reward -= 0.1 // Slow scheduling
+	}
+
+	// Clamp reward to [-1, 2]
+	if reward < -1.0 {
+		reward = -1.0
+	} else if reward > 2.0 {
+		reward = 2.0
+	}
+
+	return reward
+}
+
+// calculateStorageReward calculates reward based on storage performance match
+func (s *SchedulingPolicyService) calculateStorageReward(
+	insight *types.ClusterInsight,
+	requirements *types.StorageRequirements,
+) float64 {
+	if len(insight.StorageDevices) == 0 {
+		return 0.0
+	}
+
+	reward := 0.0
+
+	// Find best matching storage device
+	for _, device := range insight.StorageDevices {
+		// Check storage class match
+		classMatch := false
+		switch requirements.StorageClass {
+		case types.StorageClassUltraFast:
+			classMatch = device.DeviceType == "nvme"
+		case types.StorageClassFast:
+			classMatch = device.DeviceType == "ssd" || device.DeviceType == "nvme"
+		case types.StorageClassCSD:
+			classMatch = device.DeviceType == "csd"
+		default:
+			classMatch = true
+		}
+
+		if classMatch {
+			// IOPS match
+			if device.MaxIOPS >= requirements.MinIOPS {
+				reward += 0.1
+			}
+
+			// Throughput match
+			if device.MaxThroughputMBPS >= float64(requirements.MinThroughputMBPS) {
+				reward += 0.1
+			}
+
+			break // Use first matching device
+		}
+	}
+
+	return reward
 }
 
 // defaultPolicyGenerator generates scheduling policy based on workload signature
@@ -162,11 +316,15 @@ func (s *SchedulingPolicyService) defaultPolicyGenerator(sig *types.WorkloadSign
 		Priority:        s.config.DefaultPriority,
 	}
 
-	// If no signature, allow scheduling to any node
+	// If no signature, allow scheduling to any node with default weights
 	if sig == nil {
 		policy.Reason = "no workload signature available, using default policy"
+		policy.PluginWeights = s.computeDefaultPluginWeights()
 		return policy
 	}
+
+	// Compute plugin weights based on workload signature
+	policy.PluginWeights = s.computePluginWeights(sig)
 
 	// Analyze workload and generate preferences
 	for nodeName, insight := range insights {
@@ -204,7 +362,90 @@ func (s *SchedulingPolicyService) defaultPolicyGenerator(sig *types.WorkloadSign
 		policy.Reason = "allow scheduling with preferences"
 	}
 
+	log.Printf("[SchedulingPolicy] PluginWeights: DLA=%.2f, STA=%.2f, IOPB=%.2f, KA=%.2f, PSA=%.2f",
+		policy.PluginWeights.DataLocalityAware, policy.PluginWeights.StorageTierAware,
+		policy.PluginWeights.IOPatternBased, policy.PluginWeights.KueueAware,
+		policy.PluginWeights.PipelineStageAware)
+
 	return policy
+}
+
+// computeDefaultPluginWeights returns default weights when no signature is available
+func (s *SchedulingPolicyService) computeDefaultPluginWeights() *types.PluginWeights {
+	return &types.PluginWeights{
+		DataLocalityAware:  0.5,
+		StorageTierAware:   0.5,
+		IOPatternBased:     0.5,
+		KueueAware:         0.5,
+		PipelineStageAware: 0.5,
+	}
+}
+
+// computePluginWeights calculates dynamic plugin weights based on workload characteristics
+func (s *SchedulingPolicyService) computePluginWeights(sig *types.WorkloadSignature) *types.PluginWeights {
+	weights := &types.PluginWeights{
+		DataLocalityAware:  0.5, // Default
+		StorageTierAware:   0.5,
+		IOPatternBased:     0.5,
+		KueueAware:         0.5,
+		PipelineStageAware: 0.5,
+	}
+
+	// Adjust weights based on I/O pattern
+	switch sig.IOPattern {
+	case types.IOPatternReadHeavy, types.IOPatternWriteHeavy:
+		// I/O intensive workloads benefit from good storage placement
+		weights.DataLocalityAware = 0.8
+		weights.StorageTierAware = 0.9
+		weights.IOPatternBased = 0.9
+	case types.IOPatternSequential:
+		weights.StorageTierAware = 0.8
+		weights.IOPatternBased = 0.7
+	case types.IOPatternRandom:
+		weights.StorageTierAware = 0.9 // NVMe/SSD important for random I/O
+		weights.IOPatternBased = 0.8
+	case types.IOPatternBursty:
+		weights.StorageTierAware = 0.7
+		weights.IOPatternBased = 0.6
+	}
+
+	// Adjust weights based on pipeline stage
+	switch sig.CurrentStage {
+	case types.PipelineStageDataLoading, types.PipelineStagePreprocessing:
+		// Data-intensive stages benefit from locality
+		weights.DataLocalityAware = 0.9
+		weights.PipelineStageAware = 0.8
+	case types.PipelineStageTraining:
+		// Training benefits from GPU and balanced storage
+		weights.PipelineStageAware = 0.7
+		if sig.IsGPUWorkload {
+			weights.StorageTierAware = 0.6 // GPU matters more than storage
+		}
+	case types.PipelineStageInference:
+		// Inference is often latency-sensitive
+		weights.StorageTierAware = 0.8
+		weights.PipelineStageAware = 0.7
+	case types.PipelineStageCheckpointing:
+		// Checkpointing is write-heavy
+		weights.StorageTierAware = 0.9
+		weights.IOPatternBased = 0.8
+	}
+
+	// Argo workflow context affects scheduling
+	if sig.ArgoContext != nil {
+		// Workflows with dependencies benefit from locality
+		if len(sig.ArgoContext.Dependencies) > 0 {
+			weights.DataLocalityAware = 0.9
+			weights.PipelineStageAware = 0.8
+		}
+	}
+
+	// Kueue is relevant for batch workloads
+	if sig.WorkloadType == types.WorkloadTypeImage || sig.WorkloadType == types.WorkloadTypeText {
+		weights.KueueAware = 0.7
+	}
+
+	return weights
 }
 
 // calculateNodeScore calculates a score for a node based on workload requirements

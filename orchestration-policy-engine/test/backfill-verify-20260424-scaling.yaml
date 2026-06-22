@@ -1,0 +1,23 @@
+apiVersion: apollo.keti.re.kr/v1
+kind: OrchestrationPolicy
+metadata:
+  name: backfill-verify-20260424
+  namespace: apollo
+  labels:
+    app: orchestration-policy-engine
+    test: backfill-verify
+spec:
+  policyType: scaling
+  probability: 90
+  urgency: HIGH
+  resourceType: CPU
+  targetNode: ai-storage-worker-01
+  targetWorkload: test-nginx-v2
+  targetNamespace: default
+  reason: "E2E: backfill/result 패치·terminal 상태 재검증(스케일링 1건)"
+  horizon: 10
+  autoExecute: true
+  priorityScore: 85
+  parameters:
+    predicted_utilization: "0.80"
+    threshold: "0.70"

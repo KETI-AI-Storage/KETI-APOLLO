@@ -41,9 +41,9 @@ spec:
         - name: FORECASTER_ENDPOINT
           value: "node-resource-forecaster.apollo.svc.cluster.local:50055"
         - name: INSIGHT_SCOPE_ADDR
-          value: "insight-scope.apollo.svc.cluster.local:50051"
+          value: "insight-scope.keti.svc.cluster.local:50054"
         - name: INSIGHT_TRACE_ADDR
-          value: "insight-trace.apollo.svc.cluster.local:50052"
+          value: "insight-trace.keti.svc.cluster.local:50052"
         resources:
           requests:
             cpu: "500m"

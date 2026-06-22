@@ -10,8 +10,9 @@ Policy Generator가 사용하는 HTTP REST 엔드포인트 제공
 """
 
 import logging
+import os
 from flask import Flask, jsonify, request
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import threading
 import numpy as np
 import json
@@ -421,7 +422,25 @@ def get_policy_recommendations(node_name: str):
                 }
                 recommendations.append(rec)
 
+        # Multi-LightGBM이 전부 NO/NORMAL이면 빈 배열 — LSTM 예측 + 동일 임계치로 보강
+        if len(recommendations) == 0:
+            lstm_extra = _build_lstm_threshold_recommendations(node_name)
+            recommendations.extend(lstm_extra)
+            logger.info(
+                f"[HTTP] LightGBM yielded 0 YES/STRESSED/CRITICAL; "
+                f"added {len(lstm_extra)} LSTM-threshold recommendations for {node_name}"
+            )
+
         logger.info(f"[HTTP] Generated {len(recommendations)} recommendations for {node_name}")
+        # PolicyRecommendation 배열 전체를 한 줄 JSON으로 남겨 policy_type 조합을 로그로 검증한다.
+        try:
+            logger.info(
+                "[HTTP] recommendations dump node=%s json=%s",
+                node_name,
+                json.dumps(recommendations, ensure_ascii=False),
+            )
+        except (TypeError, ValueError) as dump_err:
+            logger.warning("[HTTP] recommendations dump failed node=%s: %s", node_name, dump_err)
 
         return jsonify(recommendations)
 
@@ -430,53 +449,222 @@ def get_policy_recommendations(node_name: str):
         return jsonify({"error": str(e)}), 500
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_lstm_threshold_recommendations(node_name: str) -> List[Dict[str, Any]]:
+    """LSTM(또는 시뮬레이션) 예측과 env 임계치로 PolicyRecommendation 리스트 생성."""
+    if servicer is None:
+        return []
+
+    current_state = servicer.cluster_state.get_node_state(node_name)
+    with servicer.history_lock:
+        history = servicer.node_history.get(node_name, [])
+
+    if len(history) >= servicer.min_history_for_prediction:
+        history_array = servicer._history_to_array(history[-60:])
+        with servicer.model_lock:
+            if getattr(servicer, 'use_attention', False):
+                predictions = servicer.attention_model.predict(sequence=history_array)
+            else:
+                predictions = servicer.basic_model.predict(sequence=history_array)
+    else:
+        predictions = servicer._simulate_predictions_from_current(current_state)
+
+    pred_15 = predictions.get(15, {}) if isinstance(predictions, dict) else {}
+    cpu_p = float(pred_15.get('predicted_cpu', current_state.get('cpu_util', 0.5)))
+    mem_p = float(pred_15.get('predicted_memory', current_state.get('memory_util', 0.5)))
+    gpu_p = float(pred_15.get('predicted_gpu', current_state.get('gpu_util', 0.0)))
+    io_p = float(pred_15.get('predicted_storage_io', current_state.get('storage_io_util', 0.3)))
+
+    cw = _float_env('FORECASTER_CPU_WARNING', 0.42)
+    cc = _float_env('FORECASTER_CPU_CRITICAL', 0.85)
+    mw = _float_env('FORECASTER_MEMORY_WARNING', 0.42)
+    mc = _float_env('FORECASTER_MEMORY_CRITICAL', 0.90)
+    gw = _float_env('FORECASTER_GPU_WARNING', 0.42)
+    gc = _float_env('FORECASTER_GPU_CRITICAL', 0.95)
+    sw = _float_env('FORECASTER_STORAGE_WARNING', 0.28)
+    sc = _float_env('FORECASTER_STORAGE_CRITICAL', 0.85)
+
+    out: List[Dict[str, Any]] = []
+
+    if cpu_p >= cc:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "migration",
+            "resource_type": "CPU",
+            "predicted_utilization": cpu_p,
+            "threshold": cc,
+            "urgency": "CRITICAL",
+            "probability": min(100, int(cpu_p * 100)),
+            "horizon_minutes": 15,
+            "reason": f"LSTM CPU forecast {cpu_p:.3f} >= critical {cc}",
+        })
+    elif cpu_p >= cw:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "scaling",
+            "resource_type": "CPU",
+            "predicted_utilization": cpu_p,
+            "threshold": cw,
+            "urgency": "HIGH",
+            "probability": min(100, int(cpu_p * 100)),
+            "horizon_minutes": 30,
+            "reason": f"LSTM CPU forecast {cpu_p:.3f} >= warning {cw}",
+        })
+
+    if mem_p >= mc:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "migration",
+            "resource_type": "MEMORY",
+            "predicted_utilization": mem_p,
+            "threshold": mc,
+            "urgency": "CRITICAL",
+            "probability": min(100, int(mem_p * 100)),
+            "horizon_minutes": 15,
+            "reason": f"LSTM memory forecast {mem_p:.3f} >= critical {mc}",
+        })
+    elif mem_p >= mw:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "scaling",
+            "resource_type": "MEMORY",
+            "predicted_utilization": mem_p,
+            "threshold": mw,
+            "urgency": "HIGH",
+            "probability": min(100, int(mem_p * 100)),
+            "horizon_minutes": 30,
+            "reason": f"LSTM memory forecast {mem_p:.3f} >= warning {mw}",
+        })
+
+    if gpu_p >= gc:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "preemption",
+            "resource_type": "GPU",
+            "predicted_utilization": gpu_p,
+            "threshold": gc,
+            "urgency": "CRITICAL",
+            "probability": min(100, int(gpu_p * 100)),
+            "horizon_minutes": 15,
+            "reason": f"LSTM GPU forecast {gpu_p:.3f} >= critical {gc}",
+        })
+    elif gpu_p >= gw:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "provisioning",
+            "resource_type": "GPU",
+            "predicted_utilization": gpu_p,
+            "threshold": gw,
+            "urgency": "HIGH",
+            "probability": min(100, int(gpu_p * 100)),
+            "horizon_minutes": 30,
+            "reason": f"LSTM GPU forecast {gpu_p:.3f} >= warning {gw}",
+        })
+
+    if io_p >= sc:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "caching",
+            "resource_type": "STORAGE_IO",
+            "predicted_utilization": io_p,
+            "threshold": sc,
+            "urgency": "CRITICAL",
+            "probability": min(100, int(io_p * 100)),
+            "horizon_minutes": 15,
+            "reason": f"LSTM storage I/O forecast {io_p:.3f} >= critical {sc}",
+        })
+    elif io_p >= sw:
+        out.append({
+            "node_name": node_name,
+            "policy_type": "loadbalance",
+            "resource_type": "STORAGE_IO",
+            "predicted_utilization": io_p,
+            "threshold": sw,
+            "urgency": "HIGH",
+            "probability": min(100, int(io_p * 100)),
+            "horizon_minutes": 30,
+            "reason": f"LSTM storage I/O forecast {io_p:.3f} >= warning {sw}",
+        })
+
+    return out
+
+
 def _generate_threshold_based_recommendations(node_name: str):
-    """Threshold 기반 권장 사항 생성 (Policy Engine 없을 때 fallback)"""
+    """Threshold 기반 권장 사항 생성 (Policy Engine 없을 때 fallback) — cluster_state + env 임계치."""
     current_state = servicer.cluster_state.get_node_state(node_name)
 
     recommendations = []
 
-    # CPU check
     cpu_util = current_state.get('cpu_util', 0.5)
-    if cpu_util >= 0.85:
+    cw = _float_env('FORECASTER_CPU_WARNING', 0.42)
+    cc = _float_env('FORECASTER_CPU_CRITICAL', 0.85)
+    if cpu_util >= cc:
         recommendations.append({
             "node_name": node_name,
             "policy_type": "migration",
             "resource_type": "CPU",
             "predicted_utilization": cpu_util,
-            "threshold": 0.85,
+            "threshold": cc,
             "urgency": "CRITICAL",
-            "probability": 90,
+            "probability": min(100, int(cpu_util * 100)),
             "horizon_minutes": 15,
-            "reason": f"CPU utilization {cpu_util*100:.1f}% exceeds critical threshold"
+            "reason": f"CPU utilization {cpu_util*100:.1f}% exceeds critical threshold",
         })
-    elif cpu_util >= 0.70:
+    elif cpu_util >= cw:
         recommendations.append({
             "node_name": node_name,
             "policy_type": "scaling",
             "resource_type": "CPU",
             "predicted_utilization": cpu_util,
-            "threshold": 0.70,
+            "threshold": cw,
             "urgency": "HIGH",
-            "probability": 75,
+            "probability": min(100, int(cpu_util * 100)),
             "horizon_minutes": 30,
-            "reason": f"CPU utilization {cpu_util*100:.1f}% exceeds warning threshold"
+            "reason": f"CPU utilization {cpu_util*100:.1f}% exceeds warning threshold",
         })
 
-    # Memory check
     mem_util = current_state.get('memory_util', 0.5)
-    if mem_util >= 0.90:
+    mw = _float_env('FORECASTER_MEMORY_WARNING', 0.42)
+    mc = _float_env('FORECASTER_MEMORY_CRITICAL', 0.90)
+    if mem_util >= mc:
         recommendations.append({
             "node_name": node_name,
             "policy_type": "migration",
             "resource_type": "MEMORY",
             "predicted_utilization": mem_util,
-            "threshold": 0.90,
+            "threshold": mc,
             "urgency": "CRITICAL",
-            "probability": 90,
+            "probability": min(100, int(mem_util * 100)),
             "horizon_minutes": 15,
-            "reason": f"Memory utilization {mem_util*100:.1f}% exceeds critical threshold"
+            "reason": f"Memory utilization {mem_util*100:.1f}% exceeds critical threshold",
         })
+    elif mem_util >= mw:
+        recommendations.append({
+            "node_name": node_name,
+            "policy_type": "scaling",
+            "resource_type": "MEMORY",
+            "predicted_utilization": mem_util,
+            "threshold": mw,
+            "urgency": "HIGH",
+            "probability": min(100, int(mem_util * 100)),
+            "horizon_minutes": 30,
+            "reason": f"Memory utilization {mem_util*100:.1f}% exceeds warning threshold",
+        })
+
+    try:
+        logger.info(
+            "[HTTP] recommendations dump (threshold_fallback policy_engine=None) node=%s json=%s",
+            node_name,
+            json.dumps(recommendations, ensure_ascii=False),
+        )
+    except (TypeError, ValueError) as dump_err:
+        logger.warning("[HTTP] recommendations dump failed node=%s: %s", node_name, dump_err)
 
     return jsonify(recommendations)
 

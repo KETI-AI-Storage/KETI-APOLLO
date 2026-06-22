@@ -8,12 +8,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apollov1 "orchestration-policy-engine/api/v1"
@@ -23,18 +26,20 @@ import (
 // PolicyGenerator 정책 자동 생성기
 type PolicyGenerator struct {
 	client           client.Client
+	kubeClient       kubernetes.Interface // Pod 노드별 목록은 API 서버 fieldSelector로만 조회 (캐시 필드 인덱스 불필요)
 	forecasterClient *forecaster.Client
 	namespace        string
 
 	// 설정
-	checkInterval    time.Duration
-	policyTTL        time.Duration
-	autoExecute      bool
+	checkInterval         time.Duration
+	policyTTL             time.Duration
+	autoExecute           bool
+	disableDuplicateCheck bool
 
 	// 상태
-	running     bool
-	stopCh      chan struct{}
-	mu          sync.Mutex
+	running bool
+	stopCh  chan struct{}
+	mu      sync.Mutex
 
 	// 중복 정책 방지
 	recentPolicies map[string]time.Time
@@ -43,35 +48,39 @@ type PolicyGenerator struct {
 
 // Config 정책 생성기 설정
 type Config struct {
-	Namespace        string
-	CheckInterval    time.Duration
-	PolicyTTL        time.Duration
-	AutoExecute      bool
-	ForecasterURL    string
+	Namespace             string
+	CheckInterval         time.Duration
+	PolicyTTL             time.Duration
+	AutoExecute           bool
+	ForecasterURL         string
+	DisableDuplicateCheck bool
 }
 
 // DefaultConfig 기본 설정
 func DefaultConfig() Config {
 	return Config{
-		Namespace:        "default",
-		CheckInterval:    60 * time.Second,
-		PolicyTTL:        10 * time.Minute,
-		AutoExecute:      false,
-		ForecasterURL:    "http://node-resource-forecaster.apollo.svc.cluster.local:8080",
+		Namespace:             "default",
+		CheckInterval:         60 * time.Second,
+		PolicyTTL:             10 * time.Minute,
+		AutoExecute:           false,
+		ForecasterURL:         "http://node-resource-forecaster.apollo.svc.cluster.local:8080",
+		DisableDuplicateCheck: false, // false: 중복정책생성 방지, true: 중복정책생성 허용(debug 용)
 	}
 }
 
 // NewPolicyGenerator 새로운 정책 생성기 생성
-func NewPolicyGenerator(k8sClient client.Client, forecasterClient *forecaster.Client, config Config) *PolicyGenerator {
+func NewPolicyGenerator(k8sClient client.Client, kubeClient kubernetes.Interface, forecasterClient *forecaster.Client, config Config) *PolicyGenerator {
 	return &PolicyGenerator{
-		client:           k8sClient,
-		forecasterClient: forecasterClient,
-		namespace:        config.Namespace,
-		checkInterval:    config.CheckInterval,
-		policyTTL:        config.PolicyTTL,
-		autoExecute:      config.AutoExecute,
-		stopCh:           make(chan struct{}),
-		recentPolicies:   make(map[string]time.Time),
+		client:                k8sClient,
+		kubeClient:            kubeClient,
+		forecasterClient:      forecasterClient,
+		namespace:             config.Namespace,
+		checkInterval:         config.CheckInterval,
+		policyTTL:             config.PolicyTTL,
+		autoExecute:           config.AutoExecute,
+		disableDuplicateCheck: config.DisableDuplicateCheck,
+		stopCh:                make(chan struct{}),
+		recentPolicies:        make(map[string]time.Time),
 	}
 }
 
@@ -89,6 +98,7 @@ func (g *PolicyGenerator) Start(ctx context.Context) error {
 	log.Println("║          Policy Generator Started                             ║")
 	log.Printf("║   Check Interval: %v                                    ║", g.checkInterval)
 	log.Printf("║   Auto Execute: %v                                          ║", g.autoExecute)
+	log.Printf("║   Disable Duplicate Check: %v                              ║", g.disableDuplicateCheck)
 	log.Println("╚═══════════════════════════════════════════════════════════════╝")
 
 	ticker := time.NewTicker(g.checkInterval)
@@ -137,10 +147,15 @@ func (g *PolicyGenerator) runPolicyGeneration(ctx context.Context) {
 
 	log.Printf("[PolicyGenerator] Found %d nodes", len(nodes))
 
-	// 노드 이름 목록 생성 (마이그레이션 대상 노드 선택에 사용)
+	// 마이그레이션 목적지 후보 노드 이름 (control-plane 제외).
+	// #13b: control-plane은 NoSchedule taint라 옮긴 Pod가 못 떠 마이그가 실패한다.
+	// (분석 대상 nodes 루프는 control-plane 포함 그대로 — 목적지 선택만 제한.)
 	var allNodeNames []string
-	for _, node := range nodes {
-		allNodeNames = append(allNodeNames, node.Name)
+	for i := range nodes {
+		if isControlPlaneNode(&nodes[i]) {
+			continue
+		}
+		allNodeNames = append(allNodeNames, nodes[i].Name)
 	}
 
 	// 2. 각 노드에 대해 예측 분석 및 정책 생성
@@ -162,22 +177,39 @@ func (g *PolicyGenerator) getNodes(ctx context.Context) ([]corev1.Node, error) {
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	// Worker 노드만 필터링 (Control Plane 제외)
-	var workerNodes []corev1.Node
+	// WHY: 현재 운영 환경은 control-plane 노드도 실제 워크로드를 받는다.
+	//      control-plane/master 라벨만으로 제외하면, ai-storage-master의
+	//      예측/정책 생성이 누락되어 특정 노드(gpu-worker-server01)만 분석된다.
+	//      따라서 스케줄 가능한 Ready 노드를 분석 대상으로 사용한다.
+	var targetNodes []corev1.Node
 	for _, node := range nodeList.Items {
-		isControlPlane := false
-		for key := range node.Labels {
-			if key == "node-role.kubernetes.io/control-plane" || key == "node-role.kubernetes.io/master" {
-				isControlPlane = true
+		ready := false
+		for _, cond := range node.Status.Conditions {
+			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+				ready = true
 				break
 			}
 		}
-		if !isControlPlane {
-			workerNodes = append(workerNodes, node)
+		if !ready {
+			continue
 		}
+		targetNodes = append(targetNodes, node)
 	}
 
-	return workerNodes, nil
+	return targetNodes, nil
+}
+
+// isControlPlaneNode는 control-plane/master 노드인지 판별한다(마이그 목적지로 부적합 — NoSchedule taint).
+func isControlPlaneNode(node *corev1.Node) bool {
+	if node == nil {
+		return false
+	}
+	for k := range node.Labels {
+		if k == "node-role.kubernetes.io/control-plane" || k == "node-role.kubernetes.io/master" {
+			return true
+		}
+	}
+	return false
 }
 
 // analyzeAndCreatePolicy 노드 분석 및 정책 생성
@@ -198,8 +230,8 @@ func (g *PolicyGenerator) analyzeAndCreatePolicy(ctx context.Context, nodeName s
 
 	log.Printf("[PolicyGenerator] Got %d recommendations for node %s", len(recommendations), nodeName)
 
-	// 노드에서 실행 중인 워크로드 찾기
-	workloadName, workloadNamespace := g.findTargetWorkload(ctx, nodeName)
+	// 노드에서 실행 중인 워크로드 찾기 (스케일링용 Deployment 이름 + 마이그레이션용 Pod 이름)
+	deploymentName, podName, workloadNamespace := g.findTargetWorkload(ctx, nodeName)
 
 	// 마이그레이션 대상 노드 선택 (현재 노드 제외)
 	var migrationTargetNode string
@@ -214,13 +246,20 @@ func (g *PolicyGenerator) analyzeAndCreatePolicy(ctx context.Context, nodeName s
 	for _, rec := range recommendations {
 		// 중복 정책 확인
 		policyKey := fmt.Sprintf("%s-%s-%s", nodeName, rec.PolicyType, rec.ResourceType)
-		if g.isDuplicatePolicy(policyKey) {
+		if !g.disableDuplicateCheck && g.isDuplicatePolicy(policyKey) {
 			log.Printf("[PolicyGenerator] Skipping duplicate policy: %s", policyKey)
 			continue
 		}
 
+		targetWorkload := g.resolveTargetWorkloadForRecommendation(rec, deploymentName, podName)
+		if targetWorkload == "" {
+			log.Printf("[PolicyGenerator] Skipping %s/%s for node %s: empty targetWorkload (deployment=%q pod=%q)",
+				rec.PolicyType, rec.ResourceType, nodeName, deploymentName, podName)
+			continue
+		}
+
 		// 정책 생성
-		policy := g.createPolicyFromRecommendation(nodeName, rec, workloadName, workloadNamespace, migrationTargetNode)
+		policy := g.createPolicyFromRecommendation(nodeName, rec, targetWorkload, workloadNamespace, migrationTargetNode)
 		if err := g.client.Create(ctx, policy); err != nil {
 			log.Printf("[PolicyGenerator] Failed to create policy: %v", err)
 			continue
@@ -235,29 +274,76 @@ func (g *PolicyGenerator) analyzeAndCreatePolicy(ctx context.Context, nodeName s
 		log.Printf("[PolicyGenerator]   Urgency: %s", policy.Spec.Urgency)
 		log.Printf("[PolicyGenerator]   Probability: %d%%", policy.Spec.Probability)
 		log.Printf("[PolicyGenerator]   Resource: %s", policy.Spec.ResourceType)
-		log.Printf("[PolicyGenerator]   Workload: %s/%s", workloadNamespace, workloadName)
+		log.Printf("[PolicyGenerator]   Workload: %s/%s", workloadNamespace, targetWorkload)
 		log.Printf("[PolicyGenerator]   Reason: %s", policy.Spec.Reason)
 		log.Printf("[PolicyGenerator] ========================================")
 	}
 }
 
-// findTargetWorkload 노드에서 실행 중인 대상 워크로드 찾기
-func (g *PolicyGenerator) findTargetWorkload(ctx context.Context, nodeName string) (string, string) {
-	// 노드에서 실행 중인 Pod 목록 조회
-	podList := &corev1.PodList{}
-	if err := g.client.List(ctx, podList, client.MatchingFields{"spec.nodeName": nodeName}); err != nil {
-		log.Printf("[PolicyGenerator] Failed to list pods on node %s: %v", nodeName, err)
-		// 기본값 반환 - 노드의 모든 워크로드 대상
-		return "all-workloads", "default"
+// migrationUnsuitableReason은 Pod가 마이그레이션 대상으로 부적합하면 그 사유를, 적합하면 빈 문자열을 반환한다.
+//
+// BUG-E: orchestrator는 마이그 완료 표시를 위해 대상 Pod 안에서 mkdir/touch를 exec한다.
+// argo workflow-controller 같은 플랫폼/인프라 컨트롤러는 distroless 이미지라 shell이 없어 exec이 영원히 실패한다.
+// 따라서 인프라 네임스페이스·컨트롤러/오퍼레이터성 Pod·distroless로 추정되는 이미지는 대상에서 제외한다.
+func migrationUnsuitableReason(pod *corev1.Pod) string {
+	// 플랫폼/인프라 네임스페이스(kube-* 는 호출부에서 이미 제외)
+	switch pod.Namespace {
+	case "argo", "argocd", "monitoring", "apollo", "keti":
+		return fmt.Sprintf("infra namespace %q", pod.Namespace)
 	}
 
-	// 실행 중인 Pod 중 시스템 Pod 제외하고 가장 오래된 Pod 선택
-	var targetPod *corev1.Pod
-	for i := range podList.Items {
-		pod := &podList.Items[i]
+	// 컨트롤러/오퍼레이터성 워크로드 휴리스틱(이름·app 라벨)
+	name := strings.ToLower(pod.Name)
+	appLabel := strings.ToLower(pod.Labels["app"])
+	for _, kw := range []string{"workflow-controller", "-controller", "-operator", "controller-manager"} {
+		if strings.Contains(name, kw) || strings.Contains(appLabel, kw) {
+			return fmt.Sprintf("controller/operator workload (matched %q)", kw)
+		}
+	}
+
+	// distroless 추정 이미지(shell/mkdir 없음) 제외
+	for _, c := range pod.Spec.Containers {
+		img := strings.ToLower(c.Image)
+		if strings.Contains(img, "distroless") || strings.Contains(img, "workflow-controller") {
+			return fmt.Sprintf("distroless-like image %q", c.Image)
+		}
+	}
+
+	return ""
+}
+
+// findTargetWorkload 노드에서 실행 중인 대상 워크로드를 찾는다.
+//
+// 반환값은 (Deployment 이름, Pod 이름, 네임스페이스)이다. 스케일링·프로비저닝 등은 오케스트레이터가
+// Deployment 리소스 이름을 기대하므로 ReplicaSet→Deployment 소유 체인을 통해 이름을 해석한다.
+// controller-runtime client.List는 기본적으로 캐시를 쓰며, spec.nodeName 필드 인덱스가 없으면
+// MatchingFieldsSelector 조차 "Index ... does not exist"로 실패한다. Pod 목록만 client-go로 API 서버에 직접 질의한다.
+func (g *PolicyGenerator) findTargetWorkload(ctx context.Context, nodeName string) (deploymentName, podName, namespace string) {
+	if g.kubeClient == nil {
+		log.Printf("[PolicyGenerator] kubeClient nil, cannot list pods on node %s", nodeName)
+		return "", "", ""
+	}
+	list, err := g.kubeClient.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: fields.OneTermEqualSelector("spec.nodeName", nodeName).String(),
+	})
+	if err != nil {
+		log.Printf("[PolicyGenerator] Failed to list pods on node %s: %v", nodeName, err)
+		return "", "", ""
+	}
+
+	var chosenPod *corev1.Pod
+	var chosenDep string
+	for i := range list.Items {
+		pod := &list.Items[i]
 
 		// 시스템 네임스페이스 제외
 		if pod.Namespace == "kube-system" || pod.Namespace == "kube-public" || pod.Namespace == "kube-node-lease" {
+			continue
+		}
+
+		// 마이그레이션 부적합 워크로드 제외(플랫폼/인프라 컨트롤러, distroless 등 — BUG-E)
+		if reason := migrationUnsuitableReason(pod); reason != "" {
+			log.Printf("[PolicyGenerator] Skipping unsuitable pod %s/%s as migration target: %s", pod.Namespace, pod.Name, reason)
 			continue
 		}
 
@@ -280,27 +366,73 @@ func (g *PolicyGenerator) findTargetWorkload(ctx context.Context, nodeName strin
 			}
 		}
 
-		// 첫 번째 적합한 Pod 선택 (또는 가장 리소스를 많이 요청하는 Pod)
-		if targetPod == nil {
-			targetPod = pod
+		dep := g.resolveDeploymentName(ctx, pod)
+		if dep != "" {
+			chosenPod = pod
+			chosenDep = dep
+			break
+		}
+		if chosenPod == nil {
+			chosenPod = pod
+			chosenDep = ""
 		}
 	}
 
-	if targetPod != nil {
-		log.Printf("[PolicyGenerator] Found target workload: %s/%s on node %s",
-			targetPod.Namespace, targetPod.Name, nodeName)
-		return targetPod.Name, targetPod.Namespace
+	if chosenPod != nil {
+		log.Printf("[PolicyGenerator] Found target workload on node %s: deployment=%q pod=%s/%s",
+			nodeName, chosenDep, chosenPod.Namespace, chosenPod.Name)
+		return chosenDep, chosenPod.Name, chosenPod.Namespace
 	}
 
-	// 적합한 Pod이 없으면 기본값
-	log.Printf("[PolicyGenerator] No suitable workload found on node %s, using default", nodeName)
-	return "node-workloads", "default"
+	log.Printf("[PolicyGenerator] No suitable workload found on node %s", nodeName)
+	return "", "", ""
+}
+
+// resolveDeploymentName은 Pod의 상위 ReplicaSet을 거쳐 Deployment 이름을 반환한다. 없으면 빈 문자열.
+//
+// controller-runtime client.Get은 내부 캐시·Informer 동기화에 의존하며, ReplicaSet은 클러스터 스코프 list/watch
+// 권한이 없으면 informer가 sync되지 않아 Timeout이 난다. namespaced 단건 Get은 client-go로 API 서버에 직접 요청한다.
+func (g *PolicyGenerator) resolveDeploymentName(ctx context.Context, pod *corev1.Pod) string {
+	if g.kubeClient == nil {
+		return ""
+	}
+	for _, ref := range pod.OwnerReferences {
+		if ref.Kind != "ReplicaSet" || ref.Name == "" {
+			continue
+		}
+		rs, err := g.kubeClient.AppsV1().ReplicaSets(pod.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			log.Printf("[PolicyGenerator] Failed to get ReplicaSet %s/%s: %v", pod.Namespace, ref.Name, err)
+			continue
+		}
+		for _, o := range rs.OwnerReferences {
+			if o.Kind == "Deployment" && o.Name != "" {
+				return o.Name
+			}
+		}
+	}
+	return ""
+}
+
+// resolveTargetWorkloadForRecommendation은 정책 유형에 맞는 targetWorkload 한 줄을 만든다.
+//
+// 마이그레이션은 오케스트레이터 API가 Pod 이름을 요구하고, 스케일링·프로비저닝 등은 Deployment 이름이 필요하다.
+func (g *PolicyGenerator) resolveTargetWorkloadForRecommendation(rec forecaster.PolicyRecommendation, deploymentName, podName string) string {
+	switch rec.PolicyType {
+	case "migration":
+		return podName
+	default:
+		return deploymentName
+	}
 }
 
 // createPolicyFromRecommendation 권장 사항으로부터 정책 생성
-func (g *PolicyGenerator) createPolicyFromRecommendation(nodeName string, rec forecaster.PolicyRecommendation, workloadName, workloadNamespace, migrationTargetNode string) *apollov1.OrchestrationPolicy {
-	// RFC 1123 규칙: 소문자, 숫자, '-'만 허용
-	policyName := strings.ToLower(fmt.Sprintf("%s-%s-%s-%d", rec.PolicyType, nodeName, rec.ResourceType, time.Now().Unix()))
+func (g *PolicyGenerator) createPolicyFromRecommendation(nodeName string, rec forecaster.PolicyRecommendation, targetWorkload, workloadNamespace, migrationTargetNode string) *apollov1.OrchestrationPolicy {
+	policyTypePart := sanitizeRFC1123NamePart(rec.PolicyType)
+	nodeNamePart := sanitizeRFC1123NamePart(nodeName)
+	resourceTypePart := sanitizeRFC1123NamePart(rec.ResourceType)
+	timestampPart := fmt.Sprintf("%d", time.Now().Unix())
+	policyName := fmt.Sprintf("%s-%s-%s-%s", policyTypePart, nodeNamePart, resourceTypePart, timestampPart)
 
 	// PolicyType 변환
 	var policyType apollov1.PolicyType
@@ -354,10 +486,10 @@ func (g *PolicyGenerator) createPolicyFromRecommendation(nodeName string, rec fo
 	// 마이그레이션 정책의 경우 SourceNode와 TargetNode 설정
 	var sourceNode, targetNode string
 	if policyType == apollov1.PolicyTypeMigration {
-		sourceNode = nodeName                // 리소스 부족 노드 (출발지)
-		targetNode = migrationTargetNode     // 여유 있는 노드 (목적지)
+		sourceNode = nodeName            // 리소스 부족 노드 (출발지)
+		targetNode = migrationTargetNode // 여유 있는 노드 (목적지)
 	} else {
-		targetNode = nodeName                // 다른 정책은 대상 노드로 설정
+		targetNode = nodeName // 다른 정책은 대상 노드로 설정
 	}
 
 	policy := &apollov1.OrchestrationPolicy{
@@ -365,11 +497,11 @@ func (g *PolicyGenerator) createPolicyFromRecommendation(nodeName string, rec fo
 			Name:      policyName,
 			Namespace: g.namespace,
 			Labels: map[string]string{
-				"app":                    "orchestration-policy-engine",
-				"policy-type":            string(policyType),
-				"target-node":            nodeName,
-				"resource-type":          string(resourceType),
-				"generated-by":           "policy-generator",
+				"app":           "orchestration-policy-engine",
+				"policy-type":   string(policyType),
+				"target-node":   nodeName,
+				"resource-type": string(resourceType),
+				"generated-by":  "policy-generator",
 			},
 			Annotations: map[string]string{
 				"apollo.keti.re.kr/predicted-utilization": fmt.Sprintf("%.2f", rec.PredictedUtilization),
@@ -384,11 +516,12 @@ func (g *PolicyGenerator) createPolicyFromRecommendation(nodeName string, rec fo
 			ResourceType:    resourceType,
 			SourceNode:      sourceNode,
 			TargetNode:      targetNode,
-			TargetWorkload:  workloadName,
+			TargetWorkload:  targetWorkload,
 			TargetNamespace: workloadNamespace,
 			Reason:          rec.Reason,
 			Horizon:         rec.HorizonMinutes,
 			AutoExecute:     g.autoExecute,
+			ExecutionMode:   defaultExecutionModeForGeneratedPolicy(policyType),
 			PriorityScore:   g.calculatePriorityScore(rec),
 			Parameters: map[string]string{
 				"predicted_utilization": fmt.Sprintf("%.2f", rec.PredictedUtilization),
@@ -399,6 +532,28 @@ func (g *PolicyGenerator) createPolicyFromRecommendation(nodeName string, rec fo
 	}
 
 	return policy
+}
+
+func defaultExecutionModeForGeneratedPolicy(policyType apollov1.PolicyType) apollov1.ExecutionMode {
+	switch policyType {
+	case apollov1.PolicyTypeScaling:
+		return apollov1.ExecutionModeContinuous
+	default:
+		return apollov1.ExecutionModeImmediate
+	}
+}
+
+var invalidDNS1123NamePart = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func sanitizeRFC1123NamePart(v string) string {
+	s := strings.ToLower(v)
+	s = strings.ReplaceAll(s, "_", "-")
+	s = invalidDNS1123NamePart.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if s == "" {
+		return "x"
+	}
+	return s
 }
 
 // calculatePriorityScore 우선순위 점수 계산
@@ -437,12 +592,20 @@ func (g *PolicyGenerator) calculatePriorityScore(rec forecaster.PolicyRecommenda
 
 // isDuplicatePolicy 중복 정책 확인
 func (g *PolicyGenerator) isDuplicatePolicy(key string) bool {
+	if g.disableDuplicateCheck {
+		return false
+	}
+
 	g.policyMu.RLock()
 	defer g.policyMu.RUnlock()
 
 	if createdAt, exists := g.recentPolicies[key]; exists {
-		// 5분 이내에 생성된 동일 정책이 있으면 중복
-		return time.Since(createdAt) < 5*time.Minute
+		ttl := g.policyTTL
+		if ttl <= 0 {
+			ttl = 5 * time.Minute
+		}
+		// TTL 기간 내에 생성된 동일 정책이 있으면 중복
+		return time.Since(createdAt) < ttl
 	}
 	return false
 }

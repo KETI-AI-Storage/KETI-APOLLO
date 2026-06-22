@@ -35,3 +35,7 @@ tmp/
 
 # Generated protobuf files (optional - uncomment if regenerating)
 # api/proto/*.pb.go
+.tmp-go/
+__pycache__/
+.venv/
+*.tar.gz

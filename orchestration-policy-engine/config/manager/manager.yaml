@@ -76,23 +76,26 @@ spec:
           httpGet:
             path: /healthz
             port: 8081
-          initialDelaySeconds: 15
+          initialDelaySeconds: 45
           periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /readyz
             port: 8081
-          initialDelaySeconds: 5
+          initialDelaySeconds: 20
           periodSeconds: 10
-        # TODO(user): Configure the resources accordingly based on the project requirements.
-        # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+          timeoutSeconds: 5
+          failureThreshold: 6
+        # 리더 선출·메트릭 TLS(8443) 병행 시 128Mi에서 프로브 타임아웃이 잦아 상향함.
         resources:
           limits:
             cpu: 500m
-            memory: 128Mi
+            memory: 512Mi
           requests:
-            cpu: 10m
-            memory: 64Mi
+            cpu: 100m
+            memory: 256Mi
         volumeMounts: []
       volumes: []
       serviceAccountName: controller-manager

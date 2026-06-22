@@ -63,7 +63,7 @@ spec:
         - name: SCHEDULER_ENDPOINT
           value: "ai-storage-scheduler:50053"
         - name: ORCHESTRATOR_ENDPOINT
-          value: "ai-storage-orchestrator:8080"
+          value: "ai-storage-orchestrator.kube-system.svc.cluster.local:8080"
         resources:
           requests:
             cpu: "100m"

@@ -484,9 +484,14 @@ type WorkloadSignature struct {
 	// Argo Workflows context
 	ArgoContext *ArgoContext `protobuf:"bytes,17,opt,name=argo_context,json=argoContext,proto3" json:"argo_context,omitempty"`
 	// Timestamps
-	FirstSeen     *timestamppb.Timestamp `protobuf:"bytes,18,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
-	LastSeen      *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	FirstSeen *timestamppb.Timestamp `protobuf:"bytes,18,opt,name=first_seen,json=firstSeen,proto3" json:"first_seen,omitempty"`
+	LastSeen  *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// MLOps platform context (Kubeflow/Kueue)
+	KubeflowInfo *KubeflowInfo `protobuf:"bytes,23,opt,name=kubeflow_info,json=kubeflowInfo,proto3" json:"kubeflow_info,omitempty"`
+	KueueInfo    *KueueInfo    `protobuf:"bytes,24,opt,name=kueue_info,json=kueueInfo,proto3" json:"kueue_info,omitempty"`
+	// Data locality information
+	DataLocality  *DataLocalityInfo `protobuf:"bytes,25,opt,name=data_locality,json=dataLocality,proto3" json:"data_locality,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -675,6 +680,27 @@ func (x *WorkloadSignature) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *WorkloadSignature) GetKubeflowInfo() *KubeflowInfo {
+	if x != nil {
+		return x.KubeflowInfo
+	}
+	return nil
+}
+
+func (x *WorkloadSignature) GetKueueInfo() *KueueInfo {
+	if x != nil {
+		return x.KueueInfo
+	}
+	return nil
+}
+
+func (x *WorkloadSignature) GetDataLocality() *DataLocalityInfo {
+	if x != nil {
+		return x.DataLocality
+	}
+	return nil
+}
+
 // ============================================
 // 2. ClusterInsight: Insight Scope -> APOLLO
 // 클러스터 전체 상태 리포트 (DaemonSet에서 수집)
@@ -699,7 +725,14 @@ type ClusterInsight struct {
 	// Aggregated I/O statistics
 	IoStatistics *IOStatistics `protobuf:"bytes,9,opt,name=io_statistics,json=ioStatistics,proto3" json:"io_statistics,omitempty"`
 	// Timestamp
-	CollectedAt   *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=collected_at,json=collectedAt,proto3" json:"collected_at,omitempty"`
+	CollectedAt *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=collected_at,json=collectedAt,proto3" json:"collected_at,omitempty"`
+	// Node type/role (compute, storage, orchestration)
+	NodeType  string   `protobuf:"bytes,11,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	NodeRoles []string `protobuf:"bytes,12,rep,name=node_roles,json=nodeRoles,proto3" json:"node_roles,omitempty"`
+	// Distributed filesystem info (분산 파일 시스템 정보)
+	DistributedFilesystems []*DistributedFilesystemInfo `protobuf:"bytes,13,rep,name=distributed_filesystems,json=distributedFilesystems,proto3" json:"distributed_filesystems,omitempty"`
+	// Kueue cluster-level info
+	ClusterQueues []*ClusterQueueStatus `protobuf:"bytes,14,rep,name=cluster_queues,json=clusterQueues,proto3" json:"cluster_queues,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -804,6 +837,244 @@ func (x *ClusterInsight) GetCollectedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ClusterInsight) GetNodeType() string {
+	if x != nil {
+		return x.NodeType
+	}
+	return ""
+}
+
+func (x *ClusterInsight) GetNodeRoles() []string {
+	if x != nil {
+		return x.NodeRoles
+	}
+	return nil
+}
+
+func (x *ClusterInsight) GetDistributedFilesystems() []*DistributedFilesystemInfo {
+	if x != nil {
+		return x.DistributedFilesystems
+	}
+	return nil
+}
+
+func (x *ClusterInsight) GetClusterQueues() []*ClusterQueueStatus {
+	if x != nil {
+		return x.ClusterQueues
+	}
+	return nil
+}
+
+// DistributedFilesystemInfo: 분산 파일 시스템 정보
+type DistributedFilesystemInfo struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Name               string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                            // 이름
+	Type               string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`                                            // nfs, cephfs, lustre, gpfs, hdfs
+	MountPath          string                 `protobuf:"bytes,3,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`                 // 마운트 경로
+	Server             string                 `protobuf:"bytes,4,opt,name=server,proto3" json:"server,omitempty"`                                        // 서버 주소
+	TotalBytes         int64                  `protobuf:"varint,5,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`             // 총 용량
+	AvailableBytes     int64                  `protobuf:"varint,6,opt,name=available_bytes,json=availableBytes,proto3" json:"available_bytes,omitempty"` // 사용 가능 용량
+	UtilizationPercent float64                `protobuf:"fixed64,7,opt,name=utilization_percent,json=utilizationPercent,proto3" json:"utilization_percent,omitempty"`
+	IsHealthy          bool                   `protobuf:"varint,8,opt,name=is_healthy,json=isHealthy,proto3" json:"is_healthy,omitempty"`
+	LatencyMs          float64                `protobuf:"fixed64,9,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`                 // 접근 지연시간
+	ThroughputMbps     float64                `protobuf:"fixed64,10,opt,name=throughput_mbps,json=throughputMbps,proto3" json:"throughput_mbps,omitempty"` // 현재 처리량
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *DistributedFilesystemInfo) Reset() {
+	*x = DistributedFilesystemInfo{}
+	mi := &file_apollo_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DistributedFilesystemInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DistributedFilesystemInfo) ProtoMessage() {}
+
+func (x *DistributedFilesystemInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_apollo_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DistributedFilesystemInfo.ProtoReflect.Descriptor instead.
+func (*DistributedFilesystemInfo) Descriptor() ([]byte, []int) {
+	return file_apollo_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *DistributedFilesystemInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DistributedFilesystemInfo) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *DistributedFilesystemInfo) GetMountPath() string {
+	if x != nil {
+		return x.MountPath
+	}
+	return ""
+}
+
+func (x *DistributedFilesystemInfo) GetServer() string {
+	if x != nil {
+		return x.Server
+	}
+	return ""
+}
+
+func (x *DistributedFilesystemInfo) GetTotalBytes() int64 {
+	if x != nil {
+		return x.TotalBytes
+	}
+	return 0
+}
+
+func (x *DistributedFilesystemInfo) GetAvailableBytes() int64 {
+	if x != nil {
+		return x.AvailableBytes
+	}
+	return 0
+}
+
+func (x *DistributedFilesystemInfo) GetUtilizationPercent() float64 {
+	if x != nil {
+		return x.UtilizationPercent
+	}
+	return 0
+}
+
+func (x *DistributedFilesystemInfo) GetIsHealthy() bool {
+	if x != nil {
+		return x.IsHealthy
+	}
+	return false
+}
+
+func (x *DistributedFilesystemInfo) GetLatencyMs() float64 {
+	if x != nil {
+		return x.LatencyMs
+	}
+	return 0
+}
+
+func (x *DistributedFilesystemInfo) GetThroughputMbps() float64 {
+	if x != nil {
+		return x.ThroughputMbps
+	}
+	return 0
+}
+
+// ClusterQueueStatus: Kueue ClusterQueue 상태
+type ClusterQueueStatus struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Name               string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	PendingWorkloads   int32                  `protobuf:"varint,2,opt,name=pending_workloads,json=pendingWorkloads,proto3" json:"pending_workloads,omitempty"`
+	AdmittedWorkloads  int32                  `protobuf:"varint,3,opt,name=admitted_workloads,json=admittedWorkloads,proto3" json:"admitted_workloads,omitempty"`
+	CpuUsagePercent    float64                `protobuf:"fixed64,4,opt,name=cpu_usage_percent,json=cpuUsagePercent,proto3" json:"cpu_usage_percent,omitempty"`
+	MemoryUsagePercent float64                `protobuf:"fixed64,5,opt,name=memory_usage_percent,json=memoryUsagePercent,proto3" json:"memory_usage_percent,omitempty"`
+	TotalLocalQueues   int32                  `protobuf:"varint,6,opt,name=total_local_queues,json=totalLocalQueues,proto3" json:"total_local_queues,omitempty"`
+	IsActive           bool                   `protobuf:"varint,7,opt,name=is_active,json=isActive,proto3" json:"is_active,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ClusterQueueStatus) Reset() {
+	*x = ClusterQueueStatus{}
+	mi := &file_apollo_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClusterQueueStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClusterQueueStatus) ProtoMessage() {}
+
+func (x *ClusterQueueStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_apollo_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClusterQueueStatus.ProtoReflect.Descriptor instead.
+func (*ClusterQueueStatus) Descriptor() ([]byte, []int) {
+	return file_apollo_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ClusterQueueStatus) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ClusterQueueStatus) GetPendingWorkloads() int32 {
+	if x != nil {
+		return x.PendingWorkloads
+	}
+	return 0
+}
+
+func (x *ClusterQueueStatus) GetAdmittedWorkloads() int32 {
+	if x != nil {
+		return x.AdmittedWorkloads
+	}
+	return 0
+}
+
+func (x *ClusterQueueStatus) GetCpuUsagePercent() float64 {
+	if x != nil {
+		return x.CpuUsagePercent
+	}
+	return 0
+}
+
+func (x *ClusterQueueStatus) GetMemoryUsagePercent() float64 {
+	if x != nil {
+		return x.MemoryUsagePercent
+	}
+	return 0
+}
+
+func (x *ClusterQueueStatus) GetTotalLocalQueues() int32 {
+	if x != nil {
+		return x.TotalLocalQueues
+	}
+	return 0
+}
+
+func (x *ClusterQueueStatus) GetIsActive() bool {
+	if x != nil {
+		return x.IsActive
+	}
+	return false
+}
+
 // ============================================
 // 3. SchedulingPolicy: APOLLO -> Scheduler
 // 스케줄링 정책/힌트
@@ -832,15 +1103,17 @@ type SchedulingPolicy struct {
 	// Reasoning (for debugging/logging)
 	Reason string `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
 	// Timestamp
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	ExpiresAt *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	// Plugin weights for dynamic scoring (APOLLO -> Scheduler)
+	PluginWeights *PluginWeights `protobuf:"bytes,15,opt,name=plugin_weights,json=pluginWeights,proto3" json:"plugin_weights,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SchedulingPolicy) Reset() {
 	*x = SchedulingPolicy{}
-	mi := &file_apollo_proto_msgTypes[2]
+	mi := &file_apollo_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -852,7 +1125,7 @@ func (x *SchedulingPolicy) String() string {
 func (*SchedulingPolicy) ProtoMessage() {}
 
 func (x *SchedulingPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[2]
+	mi := &file_apollo_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -865,7 +1138,7 @@ func (x *SchedulingPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchedulingPolicy.ProtoReflect.Descriptor instead.
 func (*SchedulingPolicy) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{2}
+	return file_apollo_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SchedulingPolicy) GetRequestId() string {
@@ -966,6 +1239,91 @@ func (x *SchedulingPolicy) GetExpiresAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *SchedulingPolicy) GetPluginWeights() *PluginWeights {
+	if x != nil {
+		return x.PluginWeights
+	}
+	return nil
+}
+
+// PluginWeights contains dynamic weights for KETI scoring plugins
+// Weights are 0.0-1.0, applied by scheduler to adjust plugin importance
+type PluginWeights struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	DataLocalityAware  float32                `protobuf:"fixed32,1,opt,name=data_locality_aware,json=dataLocalityAware,proto3" json:"data_locality_aware,omitempty"`    // DataLocalityAware plugin weight
+	StorageTierAware   float32                `protobuf:"fixed32,2,opt,name=storage_tier_aware,json=storageTierAware,proto3" json:"storage_tier_aware,omitempty"`       // StorageTierAware plugin weight
+	IoPatternBased     float32                `protobuf:"fixed32,3,opt,name=io_pattern_based,json=ioPatternBased,proto3" json:"io_pattern_based,omitempty"`             // IOPatternBased plugin weight
+	KueueAware         float32                `protobuf:"fixed32,4,opt,name=kueue_aware,json=kueueAware,proto3" json:"kueue_aware,omitempty"`                           // KueueAware plugin weight
+	PipelineStageAware float32                `protobuf:"fixed32,5,opt,name=pipeline_stage_aware,json=pipelineStageAware,proto3" json:"pipeline_stage_aware,omitempty"` // PipelineStageAware plugin weight
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *PluginWeights) Reset() {
+	*x = PluginWeights{}
+	mi := &file_apollo_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PluginWeights) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PluginWeights) ProtoMessage() {}
+
+func (x *PluginWeights) ProtoReflect() protoreflect.Message {
+	mi := &file_apollo_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PluginWeights.ProtoReflect.Descriptor instead.
+func (*PluginWeights) Descriptor() ([]byte, []int) {
+	return file_apollo_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *PluginWeights) GetDataLocalityAware() float32 {
+	if x != nil {
+		return x.DataLocalityAware
+	}
+	return 0
+}
+
+func (x *PluginWeights) GetStorageTierAware() float32 {
+	if x != nil {
+		return x.StorageTierAware
+	}
+	return 0
+}
+
+func (x *PluginWeights) GetIoPatternBased() float32 {
+	if x != nil {
+		return x.IoPatternBased
+	}
+	return 0
+}
+
+func (x *PluginWeights) GetKueueAware() float32 {
+	if x != nil {
+		return x.KueueAware
+	}
+	return 0
+}
+
+func (x *PluginWeights) GetPipelineStageAware() float32 {
+	if x != nil {
+		return x.PipelineStageAware
+	}
+	return 0
+}
+
 // ============================================
 // 4. OrchestrationPolicy: APOLLO -> Orchestrator
 // 오케스트레이션 정책 (마이그레이션/프로비저닝/오토스케일링)
@@ -1000,7 +1358,7 @@ type OrchestrationPolicy struct {
 
 func (x *OrchestrationPolicy) Reset() {
 	*x = OrchestrationPolicy{}
-	mi := &file_apollo_proto_msgTypes[3]
+	mi := &file_apollo_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1012,7 +1370,7 @@ func (x *OrchestrationPolicy) String() string {
 func (*OrchestrationPolicy) ProtoMessage() {}
 
 func (x *OrchestrationPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[3]
+	mi := &file_apollo_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1025,7 +1383,7 @@ func (x *OrchestrationPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestrationPolicy.ProtoReflect.Descriptor instead.
 func (*OrchestrationPolicy) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{3}
+	return file_apollo_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *OrchestrationPolicy) GetRequestId() string {
@@ -1176,7 +1534,7 @@ type ResourcePrediction struct {
 
 func (x *ResourcePrediction) Reset() {
 	*x = ResourcePrediction{}
-	mi := &file_apollo_proto_msgTypes[4]
+	mi := &file_apollo_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1188,7 +1546,7 @@ func (x *ResourcePrediction) String() string {
 func (*ResourcePrediction) ProtoMessage() {}
 
 func (x *ResourcePrediction) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[4]
+	mi := &file_apollo_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1201,7 +1559,7 @@ func (x *ResourcePrediction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourcePrediction.ProtoReflect.Descriptor instead.
 func (*ResourcePrediction) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{4}
+	return file_apollo_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ResourcePrediction) GetNodeName() string {
@@ -1351,7 +1709,7 @@ type ResourceMetrics struct {
 
 func (x *ResourceMetrics) Reset() {
 	*x = ResourceMetrics{}
-	mi := &file_apollo_proto_msgTypes[5]
+	mi := &file_apollo_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1363,7 +1721,7 @@ func (x *ResourceMetrics) String() string {
 func (*ResourceMetrics) ProtoMessage() {}
 
 func (x *ResourceMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[5]
+	mi := &file_apollo_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1376,7 +1734,7 @@ func (x *ResourceMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceMetrics.ProtoReflect.Descriptor instead.
 func (*ResourceMetrics) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{5}
+	return file_apollo_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ResourceMetrics) GetCpuUsagePercent() float64 {
@@ -1539,7 +1897,7 @@ type StorageRecommendation struct {
 
 func (x *StorageRecommendation) Reset() {
 	*x = StorageRecommendation{}
-	mi := &file_apollo_proto_msgTypes[6]
+	mi := &file_apollo_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1551,7 +1909,7 @@ func (x *StorageRecommendation) String() string {
 func (*StorageRecommendation) ProtoMessage() {}
 
 func (x *StorageRecommendation) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[6]
+	mi := &file_apollo_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1564,7 +1922,7 @@ func (x *StorageRecommendation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorageRecommendation.ProtoReflect.Descriptor instead.
 func (*StorageRecommendation) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{6}
+	return file_apollo_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StorageRecommendation) GetRecommendedClass() StorageClass {
@@ -1622,7 +1980,7 @@ type ArgoContext struct {
 
 func (x *ArgoContext) Reset() {
 	*x = ArgoContext{}
-	mi := &file_apollo_proto_msgTypes[7]
+	mi := &file_apollo_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1634,7 +1992,7 @@ func (x *ArgoContext) String() string {
 func (*ArgoContext) ProtoMessage() {}
 
 func (x *ArgoContext) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[7]
+	mi := &file_apollo_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1647,7 +2005,7 @@ func (x *ArgoContext) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArgoContext.ProtoReflect.Descriptor instead.
 func (*ArgoContext) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{7}
+	return file_apollo_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ArgoContext) GetWorkflowName() string {
@@ -1746,7 +2104,7 @@ type ArgoArtifact struct {
 
 func (x *ArgoArtifact) Reset() {
 	*x = ArgoArtifact{}
-	mi := &file_apollo_proto_msgTypes[8]
+	mi := &file_apollo_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1758,7 +2116,7 @@ func (x *ArgoArtifact) String() string {
 func (*ArgoArtifact) ProtoMessage() {}
 
 func (x *ArgoArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[8]
+	mi := &file_apollo_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1771,7 +2129,7 @@ func (x *ArgoArtifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArgoArtifact.ProtoReflect.Descriptor instead.
 func (*ArgoArtifact) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{8}
+	return file_apollo_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ArgoArtifact) GetName() string {
@@ -1802,6 +2160,536 @@ func (x *ArgoArtifact) GetFrom() string {
 	return ""
 }
 
+// KubeflowInfo: Kubeflow 작업 정보
+type KubeflowInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Job parallelism (Job 병렬도)
+	Parallelism int32 `protobuf:"varint,1,opt,name=parallelism,proto3" json:"parallelism,omitempty"`
+	Completions int32 `protobuf:"varint,2,opt,name=completions,proto3" json:"completions,omitempty"`
+	// Retry policy (재시도 정책)
+	BackoffLimit          int32  `protobuf:"varint,3,opt,name=backoff_limit,json=backoffLimit,proto3" json:"backoff_limit,omitempty"`                              // 최대 재시도 횟수
+	RestartPolicy         string `protobuf:"bytes,4,opt,name=restart_policy,json=restartPolicy,proto3" json:"restart_policy,omitempty"`                            // Never, OnFailure, Always
+	ActiveDeadlineSeconds int32  `protobuf:"varint,5,opt,name=active_deadline_seconds,json=activeDeadlineSeconds,proto3" json:"active_deadline_seconds,omitempty"` // 활성 기한
+	// Replica spec (Replica 스펙)
+	Replicas    int32 `protobuf:"varint,6,opt,name=replicas,proto3" json:"replicas,omitempty"`
+	MinReplicas int32 `protobuf:"varint,7,opt,name=min_replicas,json=minReplicas,proto3" json:"min_replicas,omitempty"`
+	MaxReplicas int32 `protobuf:"varint,8,opt,name=max_replicas,json=maxReplicas,proto3" json:"max_replicas,omitempty"`
+	// Resource requests per replica
+	CpuRequest         float64 `protobuf:"fixed64,9,opt,name=cpu_request,json=cpuRequest,proto3" json:"cpu_request,omitempty"`
+	MemoryRequestBytes int64   `protobuf:"varint,10,opt,name=memory_request_bytes,json=memoryRequestBytes,proto3" json:"memory_request_bytes,omitempty"`
+	GpuRequest         int32   `protobuf:"varint,11,opt,name=gpu_request,json=gpuRequest,proto3" json:"gpu_request,omitempty"`
+	// Job status
+	JobType       string `protobuf:"bytes,12,opt,name=job_type,json=jobType,proto3" json:"job_type,omitempty"` // TFJob, PyTorchJob, MPIJob, etc.
+	Phase         string `protobuf:"bytes,13,opt,name=phase,proto3" json:"phase,omitempty"`                    // Running, Succeeded, Failed
+	ActivePods    int32  `protobuf:"varint,14,opt,name=active_pods,json=activePods,proto3" json:"active_pods,omitempty"`
+	SucceededPods int32  `protobuf:"varint,15,opt,name=succeeded_pods,json=succeededPods,proto3" json:"succeeded_pods,omitempty"`
+	FailedPods    int32  `protobuf:"varint,16,opt,name=failed_pods,json=failedPods,proto3" json:"failed_pods,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KubeflowInfo) Reset() {
+	*x = KubeflowInfo{}
+	mi := &file_apollo_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KubeflowInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KubeflowInfo) ProtoMessage() {}
+
+func (x *KubeflowInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_apollo_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KubeflowInfo.ProtoReflect.Descriptor instead.
+func (*KubeflowInfo) Descriptor() ([]byte, []int) {
+	return file_apollo_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *KubeflowInfo) GetParallelism() int32 {
+	if x != nil {
+		return x.Parallelism
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetCompletions() int32 {
+	if x != nil {
+		return x.Completions
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetBackoffLimit() int32 {
+	if x != nil {
+		return x.BackoffLimit
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetRestartPolicy() string {
+	if x != nil {
+		return x.RestartPolicy
+	}
+	return ""
+}
+
+func (x *KubeflowInfo) GetActiveDeadlineSeconds() int32 {
+	if x != nil {
+		return x.ActiveDeadlineSeconds
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetReplicas() int32 {
+	if x != nil {
+		return x.Replicas
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetMinReplicas() int32 {
+	if x != nil {
+		return x.MinReplicas
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetMaxReplicas() int32 {
+	if x != nil {
+		return x.MaxReplicas
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetCpuRequest() float64 {
+	if x != nil {
+		return x.CpuRequest
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetMemoryRequestBytes() int64 {
+	if x != nil {
+		return x.MemoryRequestBytes
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetGpuRequest() int32 {
+	if x != nil {
+		return x.GpuRequest
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetJobType() string {
+	if x != nil {
+		return x.JobType
+	}
+	return ""
+}
+
+func (x *KubeflowInfo) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *KubeflowInfo) GetActivePods() int32 {
+	if x != nil {
+		return x.ActivePods
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetSucceededPods() int32 {
+	if x != nil {
+		return x.SucceededPods
+	}
+	return 0
+}
+
+func (x *KubeflowInfo) GetFailedPods() int32 {
+	if x != nil {
+		return x.FailedPods
+	}
+	return 0
+}
+
+// KueueInfo: Kueue 큐 정보
+type KueueInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Queue count/status (큐 개수/상태)
+	QueueName    string `protobuf:"bytes,1,opt,name=queue_name,json=queueName,proto3" json:"queue_name,omitempty"`
+	ClusterQueue string `protobuf:"bytes,2,opt,name=cluster_queue,json=clusterQueue,proto3" json:"cluster_queue,omitempty"`
+	LocalQueue   string `protobuf:"bytes,3,opt,name=local_queue,json=localQueue,proto3" json:"local_queue,omitempty"`
+	// Queue status
+	PendingWorkloads  int32 `protobuf:"varint,4,opt,name=pending_workloads,json=pendingWorkloads,proto3" json:"pending_workloads,omitempty"`    // 대기 중인 워크로드 수
+	AdmittedWorkloads int32 `protobuf:"varint,5,opt,name=admitted_workloads,json=admittedWorkloads,proto3" json:"admitted_workloads,omitempty"` // 승인된 워크로드 수
+	ReservedWorkloads int32 `protobuf:"varint,6,opt,name=reserved_workloads,json=reservedWorkloads,proto3" json:"reserved_workloads,omitempty"` // 예약된 워크로드 수
+	// Queue resources
+	NominalCpu           float64 `protobuf:"fixed64,7,opt,name=nominal_cpu,json=nominalCpu,proto3" json:"nominal_cpu,omitempty"`                                 // 명목 CPU
+	NominalMemoryBytes   int64   `protobuf:"varint,8,opt,name=nominal_memory_bytes,json=nominalMemoryBytes,proto3" json:"nominal_memory_bytes,omitempty"`        // 명목 메모리
+	BorrowingLimitCpu    float64 `protobuf:"fixed64,9,opt,name=borrowing_limit_cpu,json=borrowingLimitCpu,proto3" json:"borrowing_limit_cpu,omitempty"`          // 차용 제한 CPU
+	BorrowingLimitMemory int64   `protobuf:"varint,10,opt,name=borrowing_limit_memory,json=borrowingLimitMemory,proto3" json:"borrowing_limit_memory,omitempty"` // 차용 제한 메모리
+	// Queue priority
+	Priority         int32  `protobuf:"varint,11,opt,name=priority,proto3" json:"priority,omitempty"`
+	PreemptionPolicy string `protobuf:"bytes,12,opt,name=preemption_policy,json=preemptionPolicy,proto3" json:"preemption_policy,omitempty"` // Never, Any, LowerPriority
+	// Topology (토폴로지)
+	TopologyKey     string   `protobuf:"bytes,13,opt,name=topology_key,json=topologyKey,proto3" json:"topology_key,omitempty"` // kubernetes.io/hostname, topology.kubernetes.io/zone
+	TopologyDomains []string `protobuf:"bytes,14,rep,name=topology_domains,json=topologyDomains,proto3" json:"topology_domains,omitempty"`
+	// Affinity
+	Affinities    []*KueueAffinity `protobuf:"bytes,15,rep,name=affinities,proto3" json:"affinities,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KueueInfo) Reset() {
+	*x = KueueInfo{}
+	mi := &file_apollo_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KueueInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KueueInfo) ProtoMessage() {}
+
+func (x *KueueInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_apollo_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KueueInfo.ProtoReflect.Descriptor instead.
+func (*KueueInfo) Descriptor() ([]byte, []int) {
+	return file_apollo_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *KueueInfo) GetQueueName() string {
+	if x != nil {
+		return x.QueueName
+	}
+	return ""
+}
+
+func (x *KueueInfo) GetClusterQueue() string {
+	if x != nil {
+		return x.ClusterQueue
+	}
+	return ""
+}
+
+func (x *KueueInfo) GetLocalQueue() string {
+	if x != nil {
+		return x.LocalQueue
+	}
+	return ""
+}
+
+func (x *KueueInfo) GetPendingWorkloads() int32 {
+	if x != nil {
+		return x.PendingWorkloads
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetAdmittedWorkloads() int32 {
+	if x != nil {
+		return x.AdmittedWorkloads
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetReservedWorkloads() int32 {
+	if x != nil {
+		return x.ReservedWorkloads
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetNominalCpu() float64 {
+	if x != nil {
+		return x.NominalCpu
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetNominalMemoryBytes() int64 {
+	if x != nil {
+		return x.NominalMemoryBytes
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetBorrowingLimitCpu() float64 {
+	if x != nil {
+		return x.BorrowingLimitCpu
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetBorrowingLimitMemory() int64 {
+	if x != nil {
+		return x.BorrowingLimitMemory
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *KueueInfo) GetPreemptionPolicy() string {
+	if x != nil {
+		return x.PreemptionPolicy
+	}
+	return ""
+}
+
+func (x *KueueInfo) GetTopologyKey() string {
+	if x != nil {
+		return x.TopologyKey
+	}
+	return ""
+}
+
+func (x *KueueInfo) GetTopologyDomains() []string {
+	if x != nil {
+		return x.TopologyDomains
+	}
+	return nil
+}
+
+func (x *KueueInfo) GetAffinities() []*KueueAffinity {
+	if x != nil {
+		return x.Affinities
+	}
+	return nil
+}
+
+// KueueAffinity: Kueue Affinity 규칙
+type KueueAffinity struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // nodeAffinity, podAffinity, podAntiAffinity
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Operator      string                 `protobuf:"bytes,3,opt,name=operator,proto3" json:"operator,omitempty"` // In, NotIn, Exists, DoesNotExist
+	Values        []string               `protobuf:"bytes,4,rep,name=values,proto3" json:"values,omitempty"`
+	TopologyKey   string                 `protobuf:"bytes,5,opt,name=topology_key,json=topologyKey,proto3" json:"topology_key,omitempty"`
+	Weight        int32                  `protobuf:"varint,6,opt,name=weight,proto3" json:"weight,omitempty"` // 0-100 for preferred, 0 for required
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KueueAffinity) Reset() {
+	*x = KueueAffinity{}
+	mi := &file_apollo_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KueueAffinity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KueueAffinity) ProtoMessage() {}
+
+func (x *KueueAffinity) ProtoReflect() protoreflect.Message {
+	mi := &file_apollo_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KueueAffinity.ProtoReflect.Descriptor instead.
+func (*KueueAffinity) Descriptor() ([]byte, []int) {
+	return file_apollo_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *KueueAffinity) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *KueueAffinity) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *KueueAffinity) GetOperator() string {
+	if x != nil {
+		return x.Operator
+	}
+	return ""
+}
+
+func (x *KueueAffinity) GetValues() []string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *KueueAffinity) GetTopologyKey() string {
+	if x != nil {
+		return x.TopologyKey
+	}
+	return ""
+}
+
+func (x *KueueAffinity) GetWeight() int32 {
+	if x != nil {
+		return x.Weight
+	}
+	return 0
+}
+
+// DataLocalityInfo: 데이터 지역성 정보
+type DataLocalityInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 분산 파일 시스템 정보
+	FilesystemType string `protobuf:"bytes,1,opt,name=filesystem_type,json=filesystemType,proto3" json:"filesystem_type,omitempty"` // nfs, cephfs, lustre, gpfs, hdfs
+	FilesystemPath string `protobuf:"bytes,2,opt,name=filesystem_path,json=filesystemPath,proto3" json:"filesystem_path,omitempty"` // 마운트 경로
+	ServerAddress  string `protobuf:"bytes,3,opt,name=server_address,json=serverAddress,proto3" json:"server_address,omitempty"`    // 서버 주소
+	// 데이터 위치
+	DataNodes   []string `protobuf:"bytes,4,rep,name=data_nodes,json=dataNodes,proto3" json:"data_nodes,omitempty"`       // 데이터가 있는 노드 목록
+	CacheNodes  []string `protobuf:"bytes,5,rep,name=cache_nodes,json=cacheNodes,proto3" json:"cache_nodes,omitempty"`    // 캐시된 노드 목록
+	PrimaryNode string   `protobuf:"bytes,6,opt,name=primary_node,json=primaryNode,proto3" json:"primary_node,omitempty"` // 주 데이터 노드
+	// 지역성 점수
+	LocalityScore           float64 `protobuf:"fixed64,7,opt,name=locality_score,json=localityScore,proto3" json:"locality_score,omitempty"`                                   // 0.0-1.0, 높을수록 지역성 좋음
+	DataSizeBytes           int64   `protobuf:"varint,8,opt,name=data_size_bytes,json=dataSizeBytes,proto3" json:"data_size_bytes,omitempty"`                                  // 데이터 크기
+	EstimatedTransferTimeMs float64 `protobuf:"fixed64,9,opt,name=estimated_transfer_time_ms,json=estimatedTransferTimeMs,proto3" json:"estimated_transfer_time_ms,omitempty"` // 예상 전송 시간
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *DataLocalityInfo) Reset() {
+	*x = DataLocalityInfo{}
+	mi := &file_apollo_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DataLocalityInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DataLocalityInfo) ProtoMessage() {}
+
+func (x *DataLocalityInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_apollo_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DataLocalityInfo.ProtoReflect.Descriptor instead.
+func (*DataLocalityInfo) Descriptor() ([]byte, []int) {
+	return file_apollo_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *DataLocalityInfo) GetFilesystemType() string {
+	if x != nil {
+		return x.FilesystemType
+	}
+	return ""
+}
+
+func (x *DataLocalityInfo) GetFilesystemPath() string {
+	if x != nil {
+		return x.FilesystemPath
+	}
+	return ""
+}
+
+func (x *DataLocalityInfo) GetServerAddress() string {
+	if x != nil {
+		return x.ServerAddress
+	}
+	return ""
+}
+
+func (x *DataLocalityInfo) GetDataNodes() []string {
+	if x != nil {
+		return x.DataNodes
+	}
+	return nil
+}
+
+func (x *DataLocalityInfo) GetCacheNodes() []string {
+	if x != nil {
+		return x.CacheNodes
+	}
+	return nil
+}
+
+func (x *DataLocalityInfo) GetPrimaryNode() string {
+	if x != nil {
+		return x.PrimaryNode
+	}
+	return ""
+}
+
+func (x *DataLocalityInfo) GetLocalityScore() float64 {
+	if x != nil {
+		return x.LocalityScore
+	}
+	return 0
+}
+
+func (x *DataLocalityInfo) GetDataSizeBytes() int64 {
+	if x != nil {
+		return x.DataSizeBytes
+	}
+	return 0
+}
+
+func (x *DataLocalityInfo) GetEstimatedTransferTimeMs() float64 {
+	if x != nil {
+		return x.EstimatedTransferTimeMs
+	}
+	return 0
+}
+
 type NodeResources struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Allocatable
@@ -1825,7 +2713,7 @@ type NodeResources struct {
 
 func (x *NodeResources) Reset() {
 	*x = NodeResources{}
-	mi := &file_apollo_proto_msgTypes[9]
+	mi := &file_apollo_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1837,7 +2725,7 @@ func (x *NodeResources) String() string {
 func (*NodeResources) ProtoMessage() {}
 
 func (x *NodeResources) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[9]
+	mi := &file_apollo_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1850,7 +2738,7 @@ func (x *NodeResources) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeResources.ProtoReflect.Descriptor instead.
 func (*NodeResources) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{9}
+	return file_apollo_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *NodeResources) GetCpuAllocatableCores() float64 {
@@ -1956,7 +2844,7 @@ type StorageDeviceStatus struct {
 
 func (x *StorageDeviceStatus) Reset() {
 	*x = StorageDeviceStatus{}
-	mi := &file_apollo_proto_msgTypes[10]
+	mi := &file_apollo_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1968,7 +2856,7 @@ func (x *StorageDeviceStatus) String() string {
 func (*StorageDeviceStatus) ProtoMessage() {}
 
 func (x *StorageDeviceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[10]
+	mi := &file_apollo_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1981,7 +2869,7 @@ func (x *StorageDeviceStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorageDeviceStatus.ProtoReflect.Descriptor instead.
 func (*StorageDeviceStatus) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{10}
+	return file_apollo_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *StorageDeviceStatus) GetDeviceName() string {
@@ -2077,7 +2965,7 @@ type CSDStatus struct {
 
 func (x *CSDStatus) Reset() {
 	*x = CSDStatus{}
-	mi := &file_apollo_proto_msgTypes[11]
+	mi := &file_apollo_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2089,7 +2977,7 @@ func (x *CSDStatus) String() string {
 func (*CSDStatus) ProtoMessage() {}
 
 func (x *CSDStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[11]
+	mi := &file_apollo_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2102,7 +2990,7 @@ func (x *CSDStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CSDStatus.ProtoReflect.Descriptor instead.
 func (*CSDStatus) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{11}
+	return file_apollo_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CSDStatus) GetDeviceId() string {
@@ -2177,7 +3065,7 @@ type GPUStatus struct {
 
 func (x *GPUStatus) Reset() {
 	*x = GPUStatus{}
-	mi := &file_apollo_proto_msgTypes[12]
+	mi := &file_apollo_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2189,7 +3077,7 @@ func (x *GPUStatus) String() string {
 func (*GPUStatus) ProtoMessage() {}
 
 func (x *GPUStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[12]
+	mi := &file_apollo_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2202,7 +3090,7 @@ func (x *GPUStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GPUStatus.ProtoReflect.Descriptor instead.
 func (*GPUStatus) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{12}
+	return file_apollo_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GPUStatus) GetGpuId() string {
@@ -2275,7 +3163,7 @@ type NetworkStatus struct {
 
 func (x *NetworkStatus) Reset() {
 	*x = NetworkStatus{}
-	mi := &file_apollo_proto_msgTypes[13]
+	mi := &file_apollo_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2287,7 +3175,7 @@ func (x *NetworkStatus) String() string {
 func (*NetworkStatus) ProtoMessage() {}
 
 func (x *NetworkStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[13]
+	mi := &file_apollo_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2300,7 +3188,7 @@ func (x *NetworkStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkStatus.ProtoReflect.Descriptor instead.
 func (*NetworkStatus) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{13}
+	return file_apollo_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *NetworkStatus) GetBandwidthMbps() float64 {
@@ -2362,7 +3250,7 @@ type IOStatistics struct {
 
 func (x *IOStatistics) Reset() {
 	*x = IOStatistics{}
-	mi := &file_apollo_proto_msgTypes[14]
+	mi := &file_apollo_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2374,7 +3262,7 @@ func (x *IOStatistics) String() string {
 func (*IOStatistics) ProtoMessage() {}
 
 func (x *IOStatistics) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[14]
+	mi := &file_apollo_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2387,7 +3275,7 @@ func (x *IOStatistics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IOStatistics.ProtoReflect.Descriptor instead.
 func (*IOStatistics) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{14}
+	return file_apollo_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *IOStatistics) GetTotalReadBytes() int64 {
@@ -2461,7 +3349,7 @@ type WorkloadSummary struct {
 
 func (x *WorkloadSummary) Reset() {
 	*x = WorkloadSummary{}
-	mi := &file_apollo_proto_msgTypes[15]
+	mi := &file_apollo_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2473,7 +3361,7 @@ func (x *WorkloadSummary) String() string {
 func (*WorkloadSummary) ProtoMessage() {}
 
 func (x *WorkloadSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[15]
+	mi := &file_apollo_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2486,7 +3374,7 @@ func (x *WorkloadSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkloadSummary.ProtoReflect.Descriptor instead.
 func (*WorkloadSummary) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{15}
+	return file_apollo_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *WorkloadSummary) GetPodName() string {
@@ -2549,7 +3437,7 @@ type NodePreference struct {
 
 func (x *NodePreference) Reset() {
 	*x = NodePreference{}
-	mi := &file_apollo_proto_msgTypes[16]
+	mi := &file_apollo_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2561,7 +3449,7 @@ func (x *NodePreference) String() string {
 func (*NodePreference) ProtoMessage() {}
 
 func (x *NodePreference) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[16]
+	mi := &file_apollo_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2574,7 +3462,7 @@ func (x *NodePreference) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodePreference.ProtoReflect.Descriptor instead.
 func (*NodePreference) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{16}
+	return file_apollo_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *NodePreference) GetNodeName() string {
@@ -2612,7 +3500,7 @@ type ComputedResourceRequirements struct {
 
 func (x *ComputedResourceRequirements) Reset() {
 	*x = ComputedResourceRequirements{}
-	mi := &file_apollo_proto_msgTypes[17]
+	mi := &file_apollo_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2624,7 +3512,7 @@ func (x *ComputedResourceRequirements) String() string {
 func (*ComputedResourceRequirements) ProtoMessage() {}
 
 func (x *ComputedResourceRequirements) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[17]
+	mi := &file_apollo_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2637,7 +3525,7 @@ func (x *ComputedResourceRequirements) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputedResourceRequirements.ProtoReflect.Descriptor instead.
 func (*ComputedResourceRequirements) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{17}
+	return file_apollo_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ComputedResourceRequirements) GetCpuCores() float64 {
@@ -2696,7 +3584,7 @@ type StorageRequirements struct {
 
 func (x *StorageRequirements) Reset() {
 	*x = StorageRequirements{}
-	mi := &file_apollo_proto_msgTypes[18]
+	mi := &file_apollo_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2708,7 +3596,7 @@ func (x *StorageRequirements) String() string {
 func (*StorageRequirements) ProtoMessage() {}
 
 func (x *StorageRequirements) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[18]
+	mi := &file_apollo_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2721,7 +3609,7 @@ func (x *StorageRequirements) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorageRequirements.ProtoReflect.Descriptor instead.
 func (*StorageRequirements) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{18}
+	return file_apollo_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *StorageRequirements) GetStorageClass() StorageClass {
@@ -2778,7 +3666,7 @@ type SchedulingConstraint struct {
 
 func (x *SchedulingConstraint) Reset() {
 	*x = SchedulingConstraint{}
-	mi := &file_apollo_proto_msgTypes[19]
+	mi := &file_apollo_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2790,7 +3678,7 @@ func (x *SchedulingConstraint) String() string {
 func (*SchedulingConstraint) ProtoMessage() {}
 
 func (x *SchedulingConstraint) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[19]
+	mi := &file_apollo_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2803,7 +3691,7 @@ func (x *SchedulingConstraint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchedulingConstraint.ProtoReflect.Descriptor instead.
 func (*SchedulingConstraint) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{19}
+	return file_apollo_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SchedulingConstraint) GetConstraintType() string {
@@ -2847,7 +3735,7 @@ type AffinityRule struct {
 
 func (x *AffinityRule) Reset() {
 	*x = AffinityRule{}
-	mi := &file_apollo_proto_msgTypes[20]
+	mi := &file_apollo_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2859,7 +3747,7 @@ func (x *AffinityRule) String() string {
 func (*AffinityRule) ProtoMessage() {}
 
 func (x *AffinityRule) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[20]
+	mi := &file_apollo_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2872,7 +3760,7 @@ func (x *AffinityRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AffinityRule.ProtoReflect.Descriptor instead.
 func (*AffinityRule) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{20}
+	return file_apollo_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *AffinityRule) GetRuleType() string {
@@ -2924,7 +3812,7 @@ type MigrationTarget struct {
 
 func (x *MigrationTarget) Reset() {
 	*x = MigrationTarget{}
-	mi := &file_apollo_proto_msgTypes[21]
+	mi := &file_apollo_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2936,7 +3824,7 @@ func (x *MigrationTarget) String() string {
 func (*MigrationTarget) ProtoMessage() {}
 
 func (x *MigrationTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[21]
+	mi := &file_apollo_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2949,7 +3837,7 @@ func (x *MigrationTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MigrationTarget.ProtoReflect.Descriptor instead.
 func (*MigrationTarget) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{21}
+	return file_apollo_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *MigrationTarget) GetPodName() string {
@@ -3009,7 +3897,7 @@ type ProvisioningTarget struct {
 
 func (x *ProvisioningTarget) Reset() {
 	*x = ProvisioningTarget{}
-	mi := &file_apollo_proto_msgTypes[22]
+	mi := &file_apollo_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3021,7 +3909,7 @@ func (x *ProvisioningTarget) String() string {
 func (*ProvisioningTarget) ProtoMessage() {}
 
 func (x *ProvisioningTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[22]
+	mi := &file_apollo_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3034,7 +3922,7 @@ func (x *ProvisioningTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProvisioningTarget.ProtoReflect.Descriptor instead.
 func (*ProvisioningTarget) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{22}
+	return file_apollo_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ProvisioningTarget) GetPvcName() string {
@@ -3100,7 +3988,7 @@ type AutoscalingTarget struct {
 
 func (x *AutoscalingTarget) Reset() {
 	*x = AutoscalingTarget{}
-	mi := &file_apollo_proto_msgTypes[23]
+	mi := &file_apollo_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3112,7 +4000,7 @@ func (x *AutoscalingTarget) String() string {
 func (*AutoscalingTarget) ProtoMessage() {}
 
 func (x *AutoscalingTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[23]
+	mi := &file_apollo_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3125,7 +4013,7 @@ func (x *AutoscalingTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AutoscalingTarget.ProtoReflect.Descriptor instead.
 func (*AutoscalingTarget) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{23}
+	return file_apollo_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AutoscalingTarget) GetWorkloadName() string {
@@ -3182,7 +4070,7 @@ type ExecutionConstraints struct {
 
 func (x *ExecutionConstraints) Reset() {
 	*x = ExecutionConstraints{}
-	mi := &file_apollo_proto_msgTypes[24]
+	mi := &file_apollo_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3194,7 +4082,7 @@ func (x *ExecutionConstraints) String() string {
 func (*ExecutionConstraints) ProtoMessage() {}
 
 func (x *ExecutionConstraints) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[24]
+	mi := &file_apollo_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3207,7 +4095,7 @@ func (x *ExecutionConstraints) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionConstraints.ProtoReflect.Descriptor instead.
 func (*ExecutionConstraints) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{24}
+	return file_apollo_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ExecutionConstraints) GetMaxRetries() int32 {
@@ -3251,7 +4139,7 @@ type TimestampedResources struct {
 
 func (x *TimestampedResources) Reset() {
 	*x = TimestampedResources{}
-	mi := &file_apollo_proto_msgTypes[25]
+	mi := &file_apollo_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3263,7 +4151,7 @@ func (x *TimestampedResources) String() string {
 func (*TimestampedResources) ProtoMessage() {}
 
 func (x *TimestampedResources) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[25]
+	mi := &file_apollo_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3276,7 +4164,7 @@ func (x *TimestampedResources) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimestampedResources.ProtoReflect.Descriptor instead.
 func (*TimestampedResources) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{25}
+	return file_apollo_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TimestampedResources) GetTimestamp() *timestamppb.Timestamp {
@@ -3326,7 +4214,7 @@ type PredictionRecommendation struct {
 
 func (x *PredictionRecommendation) Reset() {
 	*x = PredictionRecommendation{}
-	mi := &file_apollo_proto_msgTypes[26]
+	mi := &file_apollo_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3338,7 +4226,7 @@ func (x *PredictionRecommendation) String() string {
 func (*PredictionRecommendation) ProtoMessage() {}
 
 func (x *PredictionRecommendation) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[26]
+	mi := &file_apollo_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3351,7 +4239,7 @@ func (x *PredictionRecommendation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PredictionRecommendation.ProtoReflect.Descriptor instead.
 func (*PredictionRecommendation) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{26}
+	return file_apollo_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PredictionRecommendation) GetRecommendationType() string {
@@ -3393,7 +4281,7 @@ type ReportResponse struct {
 
 func (x *ReportResponse) Reset() {
 	*x = ReportResponse{}
-	mi := &file_apollo_proto_msgTypes[27]
+	mi := &file_apollo_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3405,7 +4293,7 @@ func (x *ReportResponse) String() string {
 func (*ReportResponse) ProtoMessage() {}
 
 func (x *ReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[27]
+	mi := &file_apollo_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3418,7 +4306,7 @@ func (x *ReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportResponse.ProtoReflect.Descriptor instead.
 func (*ReportResponse) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{27}
+	return file_apollo_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ReportResponse) GetSuccess() bool {
@@ -3453,7 +4341,7 @@ type StreamResponse struct {
 
 func (x *StreamResponse) Reset() {
 	*x = StreamResponse{}
-	mi := &file_apollo_proto_msgTypes[28]
+	mi := &file_apollo_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3465,7 +4353,7 @@ func (x *StreamResponse) String() string {
 func (*StreamResponse) ProtoMessage() {}
 
 func (x *StreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[28]
+	mi := &file_apollo_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3478,7 +4366,7 @@ func (x *StreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamResponse.ProtoReflect.Descriptor instead.
 func (*StreamResponse) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{28}
+	return file_apollo_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *StreamResponse) GetMessagesReceived() int64 {
@@ -3515,7 +4403,7 @@ type SchedulingPolicyRequest struct {
 
 func (x *SchedulingPolicyRequest) Reset() {
 	*x = SchedulingPolicyRequest{}
-	mi := &file_apollo_proto_msgTypes[29]
+	mi := &file_apollo_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3527,7 +4415,7 @@ func (x *SchedulingPolicyRequest) String() string {
 func (*SchedulingPolicyRequest) ProtoMessage() {}
 
 func (x *SchedulingPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[29]
+	mi := &file_apollo_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3540,7 +4428,7 @@ func (x *SchedulingPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchedulingPolicyRequest.ProtoReflect.Descriptor instead.
 func (*SchedulingPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{29}
+	return file_apollo_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *SchedulingPolicyRequest) GetPodName() string {
@@ -3593,7 +4481,7 @@ type SchedulingResult struct {
 
 func (x *SchedulingResult) Reset() {
 	*x = SchedulingResult{}
-	mi := &file_apollo_proto_msgTypes[30]
+	mi := &file_apollo_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3605,7 +4493,7 @@ func (x *SchedulingResult) String() string {
 func (*SchedulingResult) ProtoMessage() {}
 
 func (x *SchedulingResult) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[30]
+	mi := &file_apollo_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3618,7 +4506,7 @@ func (x *SchedulingResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchedulingResult.ProtoReflect.Descriptor instead.
 func (*SchedulingResult) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{30}
+	return file_apollo_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *SchedulingResult) GetRequestId() string {
@@ -3681,7 +4569,7 @@ type PolicySubscription struct {
 
 func (x *PolicySubscription) Reset() {
 	*x = PolicySubscription{}
-	mi := &file_apollo_proto_msgTypes[31]
+	mi := &file_apollo_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3693,7 +4581,7 @@ func (x *PolicySubscription) String() string {
 func (*PolicySubscription) ProtoMessage() {}
 
 func (x *PolicySubscription) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[31]
+	mi := &file_apollo_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3706,7 +4594,7 @@ func (x *PolicySubscription) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicySubscription.ProtoReflect.Descriptor instead.
 func (*PolicySubscription) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{31}
+	return file_apollo_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *PolicySubscription) GetSubscriberId() string {
@@ -3741,7 +4629,7 @@ type OrchestrationPolicyRequest struct {
 
 func (x *OrchestrationPolicyRequest) Reset() {
 	*x = OrchestrationPolicyRequest{}
-	mi := &file_apollo_proto_msgTypes[32]
+	mi := &file_apollo_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3753,7 +4641,7 @@ func (x *OrchestrationPolicyRequest) String() string {
 func (*OrchestrationPolicyRequest) ProtoMessage() {}
 
 func (x *OrchestrationPolicyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[32]
+	mi := &file_apollo_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3766,7 +4654,7 @@ func (x *OrchestrationPolicyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestrationPolicyRequest.ProtoReflect.Descriptor instead.
 func (*OrchestrationPolicyRequest) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{32}
+	return file_apollo_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *OrchestrationPolicyRequest) GetPodName() string {
@@ -3804,7 +4692,7 @@ type ExecutionResult struct {
 
 func (x *ExecutionResult) Reset() {
 	*x = ExecutionResult{}
-	mi := &file_apollo_proto_msgTypes[33]
+	mi := &file_apollo_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3816,7 +4704,7 @@ func (x *ExecutionResult) String() string {
 func (*ExecutionResult) ProtoMessage() {}
 
 func (x *ExecutionResult) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[33]
+	mi := &file_apollo_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3829,7 +4717,7 @@ func (x *ExecutionResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionResult.ProtoReflect.Descriptor instead.
 func (*ExecutionResult) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{33}
+	return file_apollo_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ExecutionResult) GetRequestId() string {
@@ -3885,7 +4773,7 @@ type PredictionRequest struct {
 
 func (x *PredictionRequest) Reset() {
 	*x = PredictionRequest{}
-	mi := &file_apollo_proto_msgTypes[34]
+	mi := &file_apollo_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3897,7 +4785,7 @@ func (x *PredictionRequest) String() string {
 func (*PredictionRequest) ProtoMessage() {}
 
 func (x *PredictionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[34]
+	mi := &file_apollo_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3910,7 +4798,7 @@ func (x *PredictionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PredictionRequest.ProtoReflect.Descriptor instead.
 func (*PredictionRequest) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{34}
+	return file_apollo_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *PredictionRequest) GetNodeName() string {
@@ -3945,7 +4833,7 @@ type ClusterPredictionRequest struct {
 
 func (x *ClusterPredictionRequest) Reset() {
 	*x = ClusterPredictionRequest{}
-	mi := &file_apollo_proto_msgTypes[35]
+	mi := &file_apollo_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3957,7 +4845,7 @@ func (x *ClusterPredictionRequest) String() string {
 func (*ClusterPredictionRequest) ProtoMessage() {}
 
 func (x *ClusterPredictionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[35]
+	mi := &file_apollo_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3970,7 +4858,7 @@ func (x *ClusterPredictionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterPredictionRequest.ProtoReflect.Descriptor instead.
 func (*ClusterPredictionRequest) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{35}
+	return file_apollo_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ClusterPredictionRequest) GetHorizonMinutes() int32 {
@@ -4005,7 +4893,7 @@ type ClusterPrediction struct {
 
 func (x *ClusterPrediction) Reset() {
 	*x = ClusterPrediction{}
-	mi := &file_apollo_proto_msgTypes[36]
+	mi := &file_apollo_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4017,7 +4905,7 @@ func (x *ClusterPrediction) String() string {
 func (*ClusterPrediction) ProtoMessage() {}
 
 func (x *ClusterPrediction) ProtoReflect() protoreflect.Message {
-	mi := &file_apollo_proto_msgTypes[36]
+	mi := &file_apollo_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4030,7 +4918,7 @@ func (x *ClusterPrediction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterPrediction.ProtoReflect.Descriptor instead.
 func (*ClusterPrediction) Descriptor() ([]byte, []int) {
-	return file_apollo_proto_rawDescGZIP(), []int{36}
+	return file_apollo_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ClusterPrediction) GetNodePredictions() []*ResourcePrediction {
@@ -4058,7 +4946,7 @@ var File_apollo_proto protoreflect.FileDescriptor
 
 const file_apollo_proto_rawDesc = "" +
 	"\n" +
-	"\fapollo.proto\x12\x06apollo\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\b\n" +
+	"\fapollo.proto\x12\x06apollo\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb6\t\n" +
 	"\x11WorkloadSignature\x12\x19\n" +
 	"\bpod_name\x18\x01 \x01(\tR\apodName\x12#\n" +
 	"\rpod_namespace\x18\x02 \x01(\tR\fpodNamespace\x12\x17\n" +
@@ -4088,7 +4976,11 @@ const file_apollo_proto_rawDesc = "" +
 	"first_seen\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\tfirstSeen\x127\n" +
 	"\tlast_seen\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x129\n" +
 	"\n" +
-	"updated_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xb2\x04\n" +
+	"updated_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x129\n" +
+	"\rkubeflow_info\x18\x17 \x01(\v2\x14.apollo.KubeflowInfoR\fkubeflowInfo\x120\n" +
+	"\n" +
+	"kueue_info\x18\x18 \x01(\v2\x11.apollo.KueueInfoR\tkueueInfo\x12=\n" +
+	"\rdata_locality\x18\x19 \x01(\v2\x18.apollo.DataLocalityInfoR\fdataLocality\"\x8d\x06\n" +
 	"\x0eClusterInsight\x12\x1b\n" +
 	"\tnode_name\x18\x01 \x01(\tR\bnodeName\x12\x19\n" +
 	"\bnode_uid\x18\x02 \x01(\tR\anodeUid\x12<\n" +
@@ -4102,7 +4994,36 @@ const file_apollo_proto_rawDesc = "" +
 	"\x0enetwork_status\x18\b \x01(\v2\x15.apollo.NetworkStatusR\rnetworkStatus\x129\n" +
 	"\rio_statistics\x18\t \x01(\v2\x14.apollo.IOStatisticsR\fioStatistics\x12=\n" +
 	"\fcollected_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\"\xe9\x05\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\x12\x1b\n" +
+	"\tnode_type\x18\v \x01(\tR\bnodeType\x12\x1d\n" +
+	"\n" +
+	"node_roles\x18\f \x03(\tR\tnodeRoles\x12Z\n" +
+	"\x17distributed_filesystems\x18\r \x03(\v2!.apollo.DistributedFilesystemInfoR\x16distributedFilesystems\x12A\n" +
+	"\x0ecluster_queues\x18\x0e \x03(\v2\x1a.apollo.ClusterQueueStatusR\rclusterQueues\"\xdc\x02\n" +
+	"\x19DistributedFilesystemInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1d\n" +
+	"\n" +
+	"mount_path\x18\x03 \x01(\tR\tmountPath\x12\x16\n" +
+	"\x06server\x18\x04 \x01(\tR\x06server\x12\x1f\n" +
+	"\vtotal_bytes\x18\x05 \x01(\x03R\n" +
+	"totalBytes\x12'\n" +
+	"\x0favailable_bytes\x18\x06 \x01(\x03R\x0eavailableBytes\x12/\n" +
+	"\x13utilization_percent\x18\a \x01(\x01R\x12utilizationPercent\x12\x1d\n" +
+	"\n" +
+	"is_healthy\x18\b \x01(\bR\tisHealthy\x12\x1d\n" +
+	"\n" +
+	"latency_ms\x18\t \x01(\x01R\tlatencyMs\x12'\n" +
+	"\x0fthroughput_mbps\x18\n" +
+	" \x01(\x01R\x0ethroughputMbps\"\xad\x02\n" +
+	"\x12ClusterQueueStatus\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12+\n" +
+	"\x11pending_workloads\x18\x02 \x01(\x05R\x10pendingWorkloads\x12-\n" +
+	"\x12admitted_workloads\x18\x03 \x01(\x05R\x11admittedWorkloads\x12*\n" +
+	"\x11cpu_usage_percent\x18\x04 \x01(\x01R\x0fcpuUsagePercent\x120\n" +
+	"\x14memory_usage_percent\x18\x05 \x01(\x01R\x12memoryUsagePercent\x12,\n" +
+	"\x12total_local_queues\x18\x06 \x01(\x05R\x10totalLocalQueues\x12\x1b\n" +
+	"\tis_active\x18\a \x01(\bR\bisActive\"\xa7\x06\n" +
 	"\x10SchedulingPolicy\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
@@ -4121,7 +5042,15 @@ const file_apollo_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"expires_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\xdf\x04\n" +
+	"expires_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12<\n" +
+	"\x0eplugin_weights\x18\x0f \x01(\v2\x15.apollo.PluginWeightsR\rpluginWeights\"\xea\x01\n" +
+	"\rPluginWeights\x12.\n" +
+	"\x13data_locality_aware\x18\x01 \x01(\x02R\x11dataLocalityAware\x12,\n" +
+	"\x12storage_tier_aware\x18\x02 \x01(\x02R\x10storageTierAware\x12(\n" +
+	"\x10io_pattern_based\x18\x03 \x01(\x02R\x0eioPatternBased\x12\x1f\n" +
+	"\vkueue_aware\x18\x04 \x01(\x02R\n" +
+	"kueueAware\x120\n" +
+	"\x14pipeline_stage_aware\x18\x05 \x01(\x02R\x12pipelineStageAware\"\xdf\x04\n" +
 	"\x13OrchestrationPolicy\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x123\n" +
@@ -4211,7 +5140,70 @@ const file_apollo_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x15\n" +
 	"\x06s3_key\x18\x03 \x01(\tR\x05s3Key\x12\x12\n" +
-	"\x04from\x18\x04 \x01(\tR\x04from\"\xc0\x04\n" +
+	"\x04from\x18\x04 \x01(\tR\x04from\"\xc6\x04\n" +
+	"\fKubeflowInfo\x12 \n" +
+	"\vparallelism\x18\x01 \x01(\x05R\vparallelism\x12 \n" +
+	"\vcompletions\x18\x02 \x01(\x05R\vcompletions\x12#\n" +
+	"\rbackoff_limit\x18\x03 \x01(\x05R\fbackoffLimit\x12%\n" +
+	"\x0erestart_policy\x18\x04 \x01(\tR\rrestartPolicy\x126\n" +
+	"\x17active_deadline_seconds\x18\x05 \x01(\x05R\x15activeDeadlineSeconds\x12\x1a\n" +
+	"\breplicas\x18\x06 \x01(\x05R\breplicas\x12!\n" +
+	"\fmin_replicas\x18\a \x01(\x05R\vminReplicas\x12!\n" +
+	"\fmax_replicas\x18\b \x01(\x05R\vmaxReplicas\x12\x1f\n" +
+	"\vcpu_request\x18\t \x01(\x01R\n" +
+	"cpuRequest\x120\n" +
+	"\x14memory_request_bytes\x18\n" +
+	" \x01(\x03R\x12memoryRequestBytes\x12\x1f\n" +
+	"\vgpu_request\x18\v \x01(\x05R\n" +
+	"gpuRequest\x12\x19\n" +
+	"\bjob_type\x18\f \x01(\tR\ajobType\x12\x14\n" +
+	"\x05phase\x18\r \x01(\tR\x05phase\x12\x1f\n" +
+	"\vactive_pods\x18\x0e \x01(\x05R\n" +
+	"activePods\x12%\n" +
+	"\x0esucceeded_pods\x18\x0f \x01(\x05R\rsucceededPods\x12\x1f\n" +
+	"\vfailed_pods\x18\x10 \x01(\x05R\n" +
+	"failedPods\"\x82\x05\n" +
+	"\tKueueInfo\x12\x1d\n" +
+	"\n" +
+	"queue_name\x18\x01 \x01(\tR\tqueueName\x12#\n" +
+	"\rcluster_queue\x18\x02 \x01(\tR\fclusterQueue\x12\x1f\n" +
+	"\vlocal_queue\x18\x03 \x01(\tR\n" +
+	"localQueue\x12+\n" +
+	"\x11pending_workloads\x18\x04 \x01(\x05R\x10pendingWorkloads\x12-\n" +
+	"\x12admitted_workloads\x18\x05 \x01(\x05R\x11admittedWorkloads\x12-\n" +
+	"\x12reserved_workloads\x18\x06 \x01(\x05R\x11reservedWorkloads\x12\x1f\n" +
+	"\vnominal_cpu\x18\a \x01(\x01R\n" +
+	"nominalCpu\x120\n" +
+	"\x14nominal_memory_bytes\x18\b \x01(\x03R\x12nominalMemoryBytes\x12.\n" +
+	"\x13borrowing_limit_cpu\x18\t \x01(\x01R\x11borrowingLimitCpu\x124\n" +
+	"\x16borrowing_limit_memory\x18\n" +
+	" \x01(\x03R\x14borrowingLimitMemory\x12\x1a\n" +
+	"\bpriority\x18\v \x01(\x05R\bpriority\x12+\n" +
+	"\x11preemption_policy\x18\f \x01(\tR\x10preemptionPolicy\x12!\n" +
+	"\ftopology_key\x18\r \x01(\tR\vtopologyKey\x12)\n" +
+	"\x10topology_domains\x18\x0e \x03(\tR\x0ftopologyDomains\x125\n" +
+	"\n" +
+	"affinities\x18\x0f \x03(\v2\x15.apollo.KueueAffinityR\n" +
+	"affinities\"\xa4\x01\n" +
+	"\rKueueAffinity\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12\x1a\n" +
+	"\boperator\x18\x03 \x01(\tR\boperator\x12\x16\n" +
+	"\x06values\x18\x04 \x03(\tR\x06values\x12!\n" +
+	"\ftopology_key\x18\x05 \x01(\tR\vtopologyKey\x12\x16\n" +
+	"\x06weight\x18\x06 \x01(\x05R\x06weight\"\xfa\x02\n" +
+	"\x10DataLocalityInfo\x12'\n" +
+	"\x0ffilesystem_type\x18\x01 \x01(\tR\x0efilesystemType\x12'\n" +
+	"\x0ffilesystem_path\x18\x02 \x01(\tR\x0efilesystemPath\x12%\n" +
+	"\x0eserver_address\x18\x03 \x01(\tR\rserverAddress\x12\x1d\n" +
+	"\n" +
+	"data_nodes\x18\x04 \x03(\tR\tdataNodes\x12\x1f\n" +
+	"\vcache_nodes\x18\x05 \x03(\tR\n" +
+	"cacheNodes\x12!\n" +
+	"\fprimary_node\x18\x06 \x01(\tR\vprimaryNode\x12%\n" +
+	"\x0elocality_score\x18\a \x01(\x01R\rlocalityScore\x12&\n" +
+	"\x0fdata_size_bytes\x18\b \x01(\x03R\rdataSizeBytes\x12;\n" +
+	"\x1aestimated_transfer_time_ms\x18\t \x01(\x01R\x17estimatedTransferTimeMs\"\xc0\x04\n" +
 	"\rNodeResources\x122\n" +
 	"\x15cpu_allocatable_cores\x18\x01 \x01(\x01R\x13cpuAllocatableCores\x128\n" +
 	"\x18memory_allocatable_bytes\x18\x02 \x01(\x03R\x16memoryAllocatableBytes\x12:\n" +
@@ -4511,7 +5503,7 @@ func file_apollo_proto_rawDescGZIP() []byte {
 }
 
 var file_apollo_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_apollo_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
+var file_apollo_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_apollo_proto_goTypes = []any{
 	(WorkloadType)(0),                    // 0: apollo.WorkloadType
 	(PipelineStage)(0),                   // 1: apollo.PipelineStage
@@ -4522,137 +5514,151 @@ var file_apollo_proto_goTypes = []any{
 	(StorageClass)(0),                    // 6: apollo.StorageClass
 	(*WorkloadSignature)(nil),            // 7: apollo.WorkloadSignature
 	(*ClusterInsight)(nil),               // 8: apollo.ClusterInsight
-	(*SchedulingPolicy)(nil),             // 9: apollo.SchedulingPolicy
-	(*OrchestrationPolicy)(nil),          // 10: apollo.OrchestrationPolicy
-	(*ResourcePrediction)(nil),           // 11: apollo.ResourcePrediction
-	(*ResourceMetrics)(nil),              // 12: apollo.ResourceMetrics
-	(*StorageRecommendation)(nil),        // 13: apollo.StorageRecommendation
-	(*ArgoContext)(nil),                  // 14: apollo.ArgoContext
-	(*ArgoArtifact)(nil),                 // 15: apollo.ArgoArtifact
-	(*NodeResources)(nil),                // 16: apollo.NodeResources
-	(*StorageDeviceStatus)(nil),          // 17: apollo.StorageDeviceStatus
-	(*CSDStatus)(nil),                    // 18: apollo.CSDStatus
-	(*GPUStatus)(nil),                    // 19: apollo.GPUStatus
-	(*NetworkStatus)(nil),                // 20: apollo.NetworkStatus
-	(*IOStatistics)(nil),                 // 21: apollo.IOStatistics
-	(*WorkloadSummary)(nil),              // 22: apollo.WorkloadSummary
-	(*NodePreference)(nil),               // 23: apollo.NodePreference
-	(*ComputedResourceRequirements)(nil), // 24: apollo.ComputedResourceRequirements
-	(*StorageRequirements)(nil),          // 25: apollo.StorageRequirements
-	(*SchedulingConstraint)(nil),         // 26: apollo.SchedulingConstraint
-	(*AffinityRule)(nil),                 // 27: apollo.AffinityRule
-	(*MigrationTarget)(nil),              // 28: apollo.MigrationTarget
-	(*ProvisioningTarget)(nil),           // 29: apollo.ProvisioningTarget
-	(*AutoscalingTarget)(nil),            // 30: apollo.AutoscalingTarget
-	(*ExecutionConstraints)(nil),         // 31: apollo.ExecutionConstraints
-	(*TimestampedResources)(nil),         // 32: apollo.TimestampedResources
-	(*PredictionRecommendation)(nil),     // 33: apollo.PredictionRecommendation
-	(*ReportResponse)(nil),               // 34: apollo.ReportResponse
-	(*StreamResponse)(nil),               // 35: apollo.StreamResponse
-	(*SchedulingPolicyRequest)(nil),      // 36: apollo.SchedulingPolicyRequest
-	(*SchedulingResult)(nil),             // 37: apollo.SchedulingResult
-	(*PolicySubscription)(nil),           // 38: apollo.PolicySubscription
-	(*OrchestrationPolicyRequest)(nil),   // 39: apollo.OrchestrationPolicyRequest
-	(*ExecutionResult)(nil),              // 40: apollo.ExecutionResult
-	(*PredictionRequest)(nil),            // 41: apollo.PredictionRequest
-	(*ClusterPredictionRequest)(nil),     // 42: apollo.ClusterPredictionRequest
-	(*ClusterPrediction)(nil),            // 43: apollo.ClusterPrediction
-	nil,                                  // 44: apollo.ArgoContext.InputParametersEntry
-	nil,                                  // 45: apollo.SchedulingPolicyRequest.PodLabelsEntry
-	nil,                                  // 46: apollo.SchedulingPolicyRequest.PodAnnotationsEntry
-	nil,                                  // 47: apollo.ExecutionResult.MetricsEntry
-	(*timestamppb.Timestamp)(nil),        // 48: google.protobuf.Timestamp
+	(*DistributedFilesystemInfo)(nil),    // 9: apollo.DistributedFilesystemInfo
+	(*ClusterQueueStatus)(nil),           // 10: apollo.ClusterQueueStatus
+	(*SchedulingPolicy)(nil),             // 11: apollo.SchedulingPolicy
+	(*PluginWeights)(nil),                // 12: apollo.PluginWeights
+	(*OrchestrationPolicy)(nil),          // 13: apollo.OrchestrationPolicy
+	(*ResourcePrediction)(nil),           // 14: apollo.ResourcePrediction
+	(*ResourceMetrics)(nil),              // 15: apollo.ResourceMetrics
+	(*StorageRecommendation)(nil),        // 16: apollo.StorageRecommendation
+	(*ArgoContext)(nil),                  // 17: apollo.ArgoContext
+	(*ArgoArtifact)(nil),                 // 18: apollo.ArgoArtifact
+	(*KubeflowInfo)(nil),                 // 19: apollo.KubeflowInfo
+	(*KueueInfo)(nil),                    // 20: apollo.KueueInfo
+	(*KueueAffinity)(nil),                // 21: apollo.KueueAffinity
+	(*DataLocalityInfo)(nil),             // 22: apollo.DataLocalityInfo
+	(*NodeResources)(nil),                // 23: apollo.NodeResources
+	(*StorageDeviceStatus)(nil),          // 24: apollo.StorageDeviceStatus
+	(*CSDStatus)(nil),                    // 25: apollo.CSDStatus
+	(*GPUStatus)(nil),                    // 26: apollo.GPUStatus
+	(*NetworkStatus)(nil),                // 27: apollo.NetworkStatus
+	(*IOStatistics)(nil),                 // 28: apollo.IOStatistics
+	(*WorkloadSummary)(nil),              // 29: apollo.WorkloadSummary
+	(*NodePreference)(nil),               // 30: apollo.NodePreference
+	(*ComputedResourceRequirements)(nil), // 31: apollo.ComputedResourceRequirements
+	(*StorageRequirements)(nil),          // 32: apollo.StorageRequirements
+	(*SchedulingConstraint)(nil),         // 33: apollo.SchedulingConstraint
+	(*AffinityRule)(nil),                 // 34: apollo.AffinityRule
+	(*MigrationTarget)(nil),              // 35: apollo.MigrationTarget
+	(*ProvisioningTarget)(nil),           // 36: apollo.ProvisioningTarget
+	(*AutoscalingTarget)(nil),            // 37: apollo.AutoscalingTarget
+	(*ExecutionConstraints)(nil),         // 38: apollo.ExecutionConstraints
+	(*TimestampedResources)(nil),         // 39: apollo.TimestampedResources
+	(*PredictionRecommendation)(nil),     // 40: apollo.PredictionRecommendation
+	(*ReportResponse)(nil),               // 41: apollo.ReportResponse
+	(*StreamResponse)(nil),               // 42: apollo.StreamResponse
+	(*SchedulingPolicyRequest)(nil),      // 43: apollo.SchedulingPolicyRequest
+	(*SchedulingResult)(nil),             // 44: apollo.SchedulingResult
+	(*PolicySubscription)(nil),           // 45: apollo.PolicySubscription
+	(*OrchestrationPolicyRequest)(nil),   // 46: apollo.OrchestrationPolicyRequest
+	(*ExecutionResult)(nil),              // 47: apollo.ExecutionResult
+	(*PredictionRequest)(nil),            // 48: apollo.PredictionRequest
+	(*ClusterPredictionRequest)(nil),     // 49: apollo.ClusterPredictionRequest
+	(*ClusterPrediction)(nil),            // 50: apollo.ClusterPrediction
+	nil,                                  // 51: apollo.ArgoContext.InputParametersEntry
+	nil,                                  // 52: apollo.SchedulingPolicyRequest.PodLabelsEntry
+	nil,                                  // 53: apollo.SchedulingPolicyRequest.PodAnnotationsEntry
+	nil,                                  // 54: apollo.ExecutionResult.MetricsEntry
+	(*timestamppb.Timestamp)(nil),        // 55: google.protobuf.Timestamp
 }
 var file_apollo_proto_depIdxs = []int32{
 	0,  // 0: apollo.WorkloadSignature.workload_type:type_name -> apollo.WorkloadType
 	1,  // 1: apollo.WorkloadSignature.current_stage:type_name -> apollo.PipelineStage
 	2,  // 2: apollo.WorkloadSignature.io_pattern:type_name -> apollo.IOPattern
-	12, // 3: apollo.WorkloadSignature.current_metrics:type_name -> apollo.ResourceMetrics
-	13, // 4: apollo.WorkloadSignature.storage_recommendation:type_name -> apollo.StorageRecommendation
-	14, // 5: apollo.WorkloadSignature.argo_context:type_name -> apollo.ArgoContext
-	48, // 6: apollo.WorkloadSignature.first_seen:type_name -> google.protobuf.Timestamp
-	48, // 7: apollo.WorkloadSignature.last_seen:type_name -> google.protobuf.Timestamp
-	48, // 8: apollo.WorkloadSignature.updated_at:type_name -> google.protobuf.Timestamp
-	16, // 9: apollo.ClusterInsight.node_resources:type_name -> apollo.NodeResources
-	17, // 10: apollo.ClusterInsight.storage_devices:type_name -> apollo.StorageDeviceStatus
-	22, // 11: apollo.ClusterInsight.running_workloads:type_name -> apollo.WorkloadSummary
-	18, // 12: apollo.ClusterInsight.csd_devices:type_name -> apollo.CSDStatus
-	19, // 13: apollo.ClusterInsight.gpu_devices:type_name -> apollo.GPUStatus
-	20, // 14: apollo.ClusterInsight.network_status:type_name -> apollo.NetworkStatus
-	21, // 15: apollo.ClusterInsight.io_statistics:type_name -> apollo.IOStatistics
-	48, // 16: apollo.ClusterInsight.collected_at:type_name -> google.protobuf.Timestamp
-	3,  // 17: apollo.SchedulingPolicy.decision:type_name -> apollo.SchedulingDecision
-	23, // 18: apollo.SchedulingPolicy.node_preferences:type_name -> apollo.NodePreference
-	24, // 19: apollo.SchedulingPolicy.resource_requirements:type_name -> apollo.ComputedResourceRequirements
-	25, // 20: apollo.SchedulingPolicy.storage_requirements:type_name -> apollo.StorageRequirements
-	26, // 21: apollo.SchedulingPolicy.constraints:type_name -> apollo.SchedulingConstraint
-	27, // 22: apollo.SchedulingPolicy.affinity_rules:type_name -> apollo.AffinityRule
-	48, // 23: apollo.SchedulingPolicy.created_at:type_name -> google.protobuf.Timestamp
-	48, // 24: apollo.SchedulingPolicy.expires_at:type_name -> google.protobuf.Timestamp
-	4,  // 25: apollo.OrchestrationPolicy.action:type_name -> apollo.OrchestrationAction
-	28, // 26: apollo.OrchestrationPolicy.migration:type_name -> apollo.MigrationTarget
-	29, // 27: apollo.OrchestrationPolicy.provisioning:type_name -> apollo.ProvisioningTarget
-	30, // 28: apollo.OrchestrationPolicy.autoscaling:type_name -> apollo.AutoscalingTarget
-	5,  // 29: apollo.OrchestrationPolicy.priority:type_name -> apollo.PolicyPriority
-	31, // 30: apollo.OrchestrationPolicy.constraints:type_name -> apollo.ExecutionConstraints
-	48, // 31: apollo.OrchestrationPolicy.created_at:type_name -> google.protobuf.Timestamp
-	48, // 32: apollo.OrchestrationPolicy.deadline:type_name -> google.protobuf.Timestamp
-	48, // 33: apollo.ResourcePrediction.prediction_start:type_name -> google.protobuf.Timestamp
-	48, // 34: apollo.ResourcePrediction.prediction_end:type_name -> google.protobuf.Timestamp
-	32, // 35: apollo.ResourcePrediction.predicted_usage:type_name -> apollo.TimestampedResources
-	32, // 36: apollo.ResourcePrediction.upper_bound:type_name -> apollo.TimestampedResources
-	32, // 37: apollo.ResourcePrediction.lower_bound:type_name -> apollo.TimestampedResources
-	33, // 38: apollo.ResourcePrediction.recommendations:type_name -> apollo.PredictionRecommendation
-	48, // 39: apollo.ResourcePrediction.created_at:type_name -> google.protobuf.Timestamp
-	48, // 40: apollo.ResourceMetrics.collected_at:type_name -> google.protobuf.Timestamp
-	6,  // 41: apollo.StorageRecommendation.recommended_class:type_name -> apollo.StorageClass
-	15, // 42: apollo.ArgoContext.input_artifacts:type_name -> apollo.ArgoArtifact
-	15, // 43: apollo.ArgoContext.output_artifacts:type_name -> apollo.ArgoArtifact
-	44, // 44: apollo.ArgoContext.input_parameters:type_name -> apollo.ArgoContext.InputParametersEntry
-	0,  // 45: apollo.WorkloadSummary.workload_type:type_name -> apollo.WorkloadType
-	1,  // 46: apollo.WorkloadSummary.current_stage:type_name -> apollo.PipelineStage
-	6,  // 47: apollo.StorageRequirements.storage_class:type_name -> apollo.StorageClass
-	2,  // 48: apollo.StorageRequirements.expected_io_pattern:type_name -> apollo.IOPattern
-	6,  // 49: apollo.ProvisioningTarget.storage_class:type_name -> apollo.StorageClass
-	48, // 50: apollo.TimestampedResources.timestamp:type_name -> google.protobuf.Timestamp
-	5,  // 51: apollo.PredictionRecommendation.priority:type_name -> apollo.PolicyPriority
-	48, // 52: apollo.PredictionRecommendation.recommended_action_time:type_name -> google.protobuf.Timestamp
-	45, // 53: apollo.SchedulingPolicyRequest.pod_labels:type_name -> apollo.SchedulingPolicyRequest.PodLabelsEntry
-	46, // 54: apollo.SchedulingPolicyRequest.pod_annotations:type_name -> apollo.SchedulingPolicyRequest.PodAnnotationsEntry
-	4,  // 55: apollo.PolicySubscription.action_filters:type_name -> apollo.OrchestrationAction
-	4,  // 56: apollo.OrchestrationPolicyRequest.requested_action:type_name -> apollo.OrchestrationAction
-	4,  // 57: apollo.ExecutionResult.action:type_name -> apollo.OrchestrationAction
-	47, // 58: apollo.ExecutionResult.metrics:type_name -> apollo.ExecutionResult.MetricsEntry
-	11, // 59: apollo.ClusterPrediction.node_predictions:type_name -> apollo.ResourcePrediction
-	11, // 60: apollo.ClusterPrediction.aggregated_prediction:type_name -> apollo.ResourcePrediction
-	48, // 61: apollo.ClusterPrediction.created_at:type_name -> google.protobuf.Timestamp
-	7,  // 62: apollo.InsightService.ReportWorkloadSignature:input_type -> apollo.WorkloadSignature
-	7,  // 63: apollo.InsightService.StreamWorkloadSignatures:input_type -> apollo.WorkloadSignature
-	8,  // 64: apollo.InsightService.ReportClusterInsight:input_type -> apollo.ClusterInsight
-	8,  // 65: apollo.InsightService.StreamClusterInsights:input_type -> apollo.ClusterInsight
-	36, // 66: apollo.SchedulingPolicyService.GetSchedulingPolicy:input_type -> apollo.SchedulingPolicyRequest
-	37, // 67: apollo.SchedulingPolicyService.ReportSchedulingResult:input_type -> apollo.SchedulingResult
-	38, // 68: apollo.OrchestrationPolicyService.SubscribePolicies:input_type -> apollo.PolicySubscription
-	39, // 69: apollo.OrchestrationPolicyService.GetOrchestrationPolicy:input_type -> apollo.OrchestrationPolicyRequest
-	40, // 70: apollo.OrchestrationPolicyService.ReportExecutionResult:input_type -> apollo.ExecutionResult
-	41, // 71: apollo.ForecastService.GetResourcePrediction:input_type -> apollo.PredictionRequest
-	42, // 72: apollo.ForecastService.GetClusterPrediction:input_type -> apollo.ClusterPredictionRequest
-	34, // 73: apollo.InsightService.ReportWorkloadSignature:output_type -> apollo.ReportResponse
-	35, // 74: apollo.InsightService.StreamWorkloadSignatures:output_type -> apollo.StreamResponse
-	34, // 75: apollo.InsightService.ReportClusterInsight:output_type -> apollo.ReportResponse
-	35, // 76: apollo.InsightService.StreamClusterInsights:output_type -> apollo.StreamResponse
-	9,  // 77: apollo.SchedulingPolicyService.GetSchedulingPolicy:output_type -> apollo.SchedulingPolicy
-	34, // 78: apollo.SchedulingPolicyService.ReportSchedulingResult:output_type -> apollo.ReportResponse
-	10, // 79: apollo.OrchestrationPolicyService.SubscribePolicies:output_type -> apollo.OrchestrationPolicy
-	10, // 80: apollo.OrchestrationPolicyService.GetOrchestrationPolicy:output_type -> apollo.OrchestrationPolicy
-	34, // 81: apollo.OrchestrationPolicyService.ReportExecutionResult:output_type -> apollo.ReportResponse
-	11, // 82: apollo.ForecastService.GetResourcePrediction:output_type -> apollo.ResourcePrediction
-	43, // 83: apollo.ForecastService.GetClusterPrediction:output_type -> apollo.ClusterPrediction
-	73, // [73:84] is the sub-list for method output_type
-	62, // [62:73] is the sub-list for method input_type
-	62, // [62:62] is the sub-list for extension type_name
-	62, // [62:62] is the sub-list for extension extendee
-	0,  // [0:62] is the sub-list for field type_name
+	15, // 3: apollo.WorkloadSignature.current_metrics:type_name -> apollo.ResourceMetrics
+	16, // 4: apollo.WorkloadSignature.storage_recommendation:type_name -> apollo.StorageRecommendation
+	17, // 5: apollo.WorkloadSignature.argo_context:type_name -> apollo.ArgoContext
+	55, // 6: apollo.WorkloadSignature.first_seen:type_name -> google.protobuf.Timestamp
+	55, // 7: apollo.WorkloadSignature.last_seen:type_name -> google.protobuf.Timestamp
+	55, // 8: apollo.WorkloadSignature.updated_at:type_name -> google.protobuf.Timestamp
+	19, // 9: apollo.WorkloadSignature.kubeflow_info:type_name -> apollo.KubeflowInfo
+	20, // 10: apollo.WorkloadSignature.kueue_info:type_name -> apollo.KueueInfo
+	22, // 11: apollo.WorkloadSignature.data_locality:type_name -> apollo.DataLocalityInfo
+	23, // 12: apollo.ClusterInsight.node_resources:type_name -> apollo.NodeResources
+	24, // 13: apollo.ClusterInsight.storage_devices:type_name -> apollo.StorageDeviceStatus
+	29, // 14: apollo.ClusterInsight.running_workloads:type_name -> apollo.WorkloadSummary
+	25, // 15: apollo.ClusterInsight.csd_devices:type_name -> apollo.CSDStatus
+	26, // 16: apollo.ClusterInsight.gpu_devices:type_name -> apollo.GPUStatus
+	27, // 17: apollo.ClusterInsight.network_status:type_name -> apollo.NetworkStatus
+	28, // 18: apollo.ClusterInsight.io_statistics:type_name -> apollo.IOStatistics
+	55, // 19: apollo.ClusterInsight.collected_at:type_name -> google.protobuf.Timestamp
+	9,  // 20: apollo.ClusterInsight.distributed_filesystems:type_name -> apollo.DistributedFilesystemInfo
+	10, // 21: apollo.ClusterInsight.cluster_queues:type_name -> apollo.ClusterQueueStatus
+	3,  // 22: apollo.SchedulingPolicy.decision:type_name -> apollo.SchedulingDecision
+	30, // 23: apollo.SchedulingPolicy.node_preferences:type_name -> apollo.NodePreference
+	31, // 24: apollo.SchedulingPolicy.resource_requirements:type_name -> apollo.ComputedResourceRequirements
+	32, // 25: apollo.SchedulingPolicy.storage_requirements:type_name -> apollo.StorageRequirements
+	33, // 26: apollo.SchedulingPolicy.constraints:type_name -> apollo.SchedulingConstraint
+	34, // 27: apollo.SchedulingPolicy.affinity_rules:type_name -> apollo.AffinityRule
+	55, // 28: apollo.SchedulingPolicy.created_at:type_name -> google.protobuf.Timestamp
+	55, // 29: apollo.SchedulingPolicy.expires_at:type_name -> google.protobuf.Timestamp
+	12, // 30: apollo.SchedulingPolicy.plugin_weights:type_name -> apollo.PluginWeights
+	4,  // 31: apollo.OrchestrationPolicy.action:type_name -> apollo.OrchestrationAction
+	35, // 32: apollo.OrchestrationPolicy.migration:type_name -> apollo.MigrationTarget
+	36, // 33: apollo.OrchestrationPolicy.provisioning:type_name -> apollo.ProvisioningTarget
+	37, // 34: apollo.OrchestrationPolicy.autoscaling:type_name -> apollo.AutoscalingTarget
+	5,  // 35: apollo.OrchestrationPolicy.priority:type_name -> apollo.PolicyPriority
+	38, // 36: apollo.OrchestrationPolicy.constraints:type_name -> apollo.ExecutionConstraints
+	55, // 37: apollo.OrchestrationPolicy.created_at:type_name -> google.protobuf.Timestamp
+	55, // 38: apollo.OrchestrationPolicy.deadline:type_name -> google.protobuf.Timestamp
+	55, // 39: apollo.ResourcePrediction.prediction_start:type_name -> google.protobuf.Timestamp
+	55, // 40: apollo.ResourcePrediction.prediction_end:type_name -> google.protobuf.Timestamp
+	39, // 41: apollo.ResourcePrediction.predicted_usage:type_name -> apollo.TimestampedResources
+	39, // 42: apollo.ResourcePrediction.upper_bound:type_name -> apollo.TimestampedResources
+	39, // 43: apollo.ResourcePrediction.lower_bound:type_name -> apollo.TimestampedResources
+	40, // 44: apollo.ResourcePrediction.recommendations:type_name -> apollo.PredictionRecommendation
+	55, // 45: apollo.ResourcePrediction.created_at:type_name -> google.protobuf.Timestamp
+	55, // 46: apollo.ResourceMetrics.collected_at:type_name -> google.protobuf.Timestamp
+	6,  // 47: apollo.StorageRecommendation.recommended_class:type_name -> apollo.StorageClass
+	18, // 48: apollo.ArgoContext.input_artifacts:type_name -> apollo.ArgoArtifact
+	18, // 49: apollo.ArgoContext.output_artifacts:type_name -> apollo.ArgoArtifact
+	51, // 50: apollo.ArgoContext.input_parameters:type_name -> apollo.ArgoContext.InputParametersEntry
+	21, // 51: apollo.KueueInfo.affinities:type_name -> apollo.KueueAffinity
+	0,  // 52: apollo.WorkloadSummary.workload_type:type_name -> apollo.WorkloadType
+	1,  // 53: apollo.WorkloadSummary.current_stage:type_name -> apollo.PipelineStage
+	6,  // 54: apollo.StorageRequirements.storage_class:type_name -> apollo.StorageClass
+	2,  // 55: apollo.StorageRequirements.expected_io_pattern:type_name -> apollo.IOPattern
+	6,  // 56: apollo.ProvisioningTarget.storage_class:type_name -> apollo.StorageClass
+	55, // 57: apollo.TimestampedResources.timestamp:type_name -> google.protobuf.Timestamp
+	5,  // 58: apollo.PredictionRecommendation.priority:type_name -> apollo.PolicyPriority
+	55, // 59: apollo.PredictionRecommendation.recommended_action_time:type_name -> google.protobuf.Timestamp
+	52, // 60: apollo.SchedulingPolicyRequest.pod_labels:type_name -> apollo.SchedulingPolicyRequest.PodLabelsEntry
+	53, // 61: apollo.SchedulingPolicyRequest.pod_annotations:type_name -> apollo.SchedulingPolicyRequest.PodAnnotationsEntry
+	4,  // 62: apollo.PolicySubscription.action_filters:type_name -> apollo.OrchestrationAction
+	4,  // 63: apollo.OrchestrationPolicyRequest.requested_action:type_name -> apollo.OrchestrationAction
+	4,  // 64: apollo.ExecutionResult.action:type_name -> apollo.OrchestrationAction
+	54, // 65: apollo.ExecutionResult.metrics:type_name -> apollo.ExecutionResult.MetricsEntry
+	14, // 66: apollo.ClusterPrediction.node_predictions:type_name -> apollo.ResourcePrediction
+	14, // 67: apollo.ClusterPrediction.aggregated_prediction:type_name -> apollo.ResourcePrediction
+	55, // 68: apollo.ClusterPrediction.created_at:type_name -> google.protobuf.Timestamp
+	7,  // 69: apollo.InsightService.ReportWorkloadSignature:input_type -> apollo.WorkloadSignature
+	7,  // 70: apollo.InsightService.StreamWorkloadSignatures:input_type -> apollo.WorkloadSignature
+	8,  // 71: apollo.InsightService.ReportClusterInsight:input_type -> apollo.ClusterInsight
+	8,  // 72: apollo.InsightService.StreamClusterInsights:input_type -> apollo.ClusterInsight
+	43, // 73: apollo.SchedulingPolicyService.GetSchedulingPolicy:input_type -> apollo.SchedulingPolicyRequest
+	44, // 74: apollo.SchedulingPolicyService.ReportSchedulingResult:input_type -> apollo.SchedulingResult
+	45, // 75: apollo.OrchestrationPolicyService.SubscribePolicies:input_type -> apollo.PolicySubscription
+	46, // 76: apollo.OrchestrationPolicyService.GetOrchestrationPolicy:input_type -> apollo.OrchestrationPolicyRequest
+	47, // 77: apollo.OrchestrationPolicyService.ReportExecutionResult:input_type -> apollo.ExecutionResult
+	48, // 78: apollo.ForecastService.GetResourcePrediction:input_type -> apollo.PredictionRequest
+	49, // 79: apollo.ForecastService.GetClusterPrediction:input_type -> apollo.ClusterPredictionRequest
+	41, // 80: apollo.InsightService.ReportWorkloadSignature:output_type -> apollo.ReportResponse
+	42, // 81: apollo.InsightService.StreamWorkloadSignatures:output_type -> apollo.StreamResponse
+	41, // 82: apollo.InsightService.ReportClusterInsight:output_type -> apollo.ReportResponse
+	42, // 83: apollo.InsightService.StreamClusterInsights:output_type -> apollo.StreamResponse
+	11, // 84: apollo.SchedulingPolicyService.GetSchedulingPolicy:output_type -> apollo.SchedulingPolicy
+	41, // 85: apollo.SchedulingPolicyService.ReportSchedulingResult:output_type -> apollo.ReportResponse
+	13, // 86: apollo.OrchestrationPolicyService.SubscribePolicies:output_type -> apollo.OrchestrationPolicy
+	13, // 87: apollo.OrchestrationPolicyService.GetOrchestrationPolicy:output_type -> apollo.OrchestrationPolicy
+	41, // 88: apollo.OrchestrationPolicyService.ReportExecutionResult:output_type -> apollo.ReportResponse
+	14, // 89: apollo.ForecastService.GetResourcePrediction:output_type -> apollo.ResourcePrediction
+	50, // 90: apollo.ForecastService.GetClusterPrediction:output_type -> apollo.ClusterPrediction
+	80, // [80:91] is the sub-list for method output_type
+	69, // [69:80] is the sub-list for method input_type
+	69, // [69:69] is the sub-list for extension type_name
+	69, // [69:69] is the sub-list for extension extendee
+	0,  // [0:69] is the sub-list for field type_name
 }
 
 func init() { file_apollo_proto_init() }
@@ -4660,7 +5666,7 @@ func file_apollo_proto_init() {
 	if File_apollo_proto != nil {
 		return
 	}
-	file_apollo_proto_msgTypes[3].OneofWrappers = []any{
+	file_apollo_proto_msgTypes[6].OneofWrappers = []any{
 		(*OrchestrationPolicy_Migration)(nil),
 		(*OrchestrationPolicy_Provisioning)(nil),
 		(*OrchestrationPolicy_Autoscaling)(nil),
@@ -4671,7 +5677,7 @@ func file_apollo_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_apollo_proto_rawDesc), len(file_apollo_proto_rawDesc)),
 			NumEnums:      7,
-			NumMessages:   41,
+			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   4,
 		},
