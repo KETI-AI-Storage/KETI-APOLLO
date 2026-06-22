@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -212,6 +213,27 @@ func isControlPlaneNode(node *corev1.Node) bool {
 	return false
 }
 
+// workloadNamespaces는 오케스트레이션 대상으로 허용할 사용자 워크로드 네임스페이스 집합(#10).
+// WORKLOAD_NAMESPACES env(콤마구분)로 설정, 기본 "ai-storage-workloads".
+var workloadNamespaces = func() map[string]bool {
+	raw := strings.TrimSpace(os.Getenv("WORKLOAD_NAMESPACES"))
+	if raw == "" {
+		raw = "ai-storage-workloads"
+	}
+	m := make(map[string]bool)
+	for _, n := range strings.Split(raw, ",") {
+		if s := strings.TrimSpace(n); s != "" {
+			m[s] = true
+		}
+	}
+	return m
+}()
+
+// isWorkloadNamespace는 ns가 사용자 워크로드 화이트리스트에 있는지 반환한다(#10).
+func isWorkloadNamespace(ns string) bool {
+	return workloadNamespaces[ns]
+}
+
 // analyzeAndCreatePolicy 노드 분석 및 정책 생성
 func (g *PolicyGenerator) analyzeAndCreatePolicy(ctx context.Context, nodeName string, allNodeNames []string) {
 	log.Printf("[PolicyGenerator] Analyzing node: %s", nodeName)
@@ -335,6 +357,13 @@ func (g *PolicyGenerator) findTargetWorkload(ctx context.Context, nodeName strin
 	var chosenDep string
 	for i := range list.Items {
 		pod := &list.Items[i]
+
+		// #10 사용자 워크로드 네임스페이스만 오케스트레이션 대상으로 삼는다.
+		// 인프라/플랫폼 ns(kubeflow의 cache-deployer 등)는 제외 — 사용자 잡이 없는 노드에서
+		// 플랫폼 부품이 잘못 타깃되어 헛정책(scaling/provisioning)을 양산하던 문제 차단.
+		if !isWorkloadNamespace(pod.Namespace) {
+			continue
+		}
 
 		// 시스템 네임스페이스 제외
 		if pod.Namespace == "kube-system" || pod.Namespace == "kube-public" || pod.Namespace == "kube-node-lease" {
