@@ -28,3 +28,20 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# Local Go toolchain cache placed inside the module (air-gapped build box) — multi-GB, never commit
+.tmp-go/
+
+# Python venv / caches (forecaster tooling)
+.venv/
+__pycache__/
+
+# Compiled binaries dropped at module root by build scripts
+/main
+/manager
+/policy-agent
+
+# Archives
+*.tar
+*.tar.gz
+*.zip
