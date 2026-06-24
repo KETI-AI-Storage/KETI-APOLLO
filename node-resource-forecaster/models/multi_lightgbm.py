@@ -442,6 +442,10 @@ class MultiLightGBMPolicyEngine:
         """
         Task 4: Caching 활성화 여부
         Output: YES / NO
+
+        NOTE: rule-based on forecast — NOT model-trained. Requires storage/IO
+        telemetry (cache hit ratio, IOPS, throughput) that is a Year-3 metric;
+        no honest training data exists yet, so this head stays rule-based.
         """
         if 'caching' in self.models:
             proba = self.models['caching'].predict(features)[0]
@@ -477,6 +481,10 @@ class MultiLightGBMPolicyEngine:
         """
         Task 5: Load Balancing 필요 여부
         Output: YES / NO
+
+        NOTE: rule-based on forecast — NOT model-trained. Requires storage/IO
+        telemetry (cache hit ratio, IOPS, throughput) that is a Year-3 metric;
+        no honest training data exists yet, so this head stays rule-based.
         """
         if 'load_balancing' in self.models:
             proba = self.models['load_balancing'].predict(features)[0]
@@ -558,6 +566,10 @@ class MultiLightGBMPolicyEngine:
         """
         Task 7: Storage Tiering 조정 여부
         Output: YES / NO (+ tier recommendation)
+
+        NOTE: rule-based on forecast — NOT model-trained. Requires storage/IO
+        telemetry (cache hit ratio, IOPS, throughput) that is a Year-3 metric;
+        no honest training data exists yet, so this head stays rule-based.
         """
         if 'storage_tiering' in self.models:
             proba = self.models['storage_tiering'].predict(features)[0]
