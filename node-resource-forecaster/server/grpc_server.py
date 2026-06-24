@@ -358,6 +358,7 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
         self.cluster_state = ClusterStateManager(refresh_interval=30)
 
         # 모델 로드
+        lstm_load_ok = False
         if model_path and os.path.exists(model_path):
             try:
                 if self.use_attention:
@@ -365,11 +366,13 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
                 else:
                     self.basic_trainer.load(model_path)
                 logger.info(f"Model loaded from {model_path}")
+                lstm_load_ok = True
             except Exception as e:
                 logger.warning(f"Failed to load model: {e}, using random initialization")
 
+        loaded_heads = list(self.policy_engine.models.keys()) if self.policy_engine else []
         from server.artifact_status import artifact_status
-        self.artifacts = artifact_status(model_path, policy_model_dir)
+        self.artifacts = artifact_status(lstm_load_ok, loaded_heads)
         logger.info("[apollo-ml] %s", self.artifacts["summary"])
         self.model_ready = self.artifacts["lstm_loaded"]
 
