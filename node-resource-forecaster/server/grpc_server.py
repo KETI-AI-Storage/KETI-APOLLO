@@ -73,6 +73,44 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level pure helper: 4-channel occupancy builder (train==serve contract)
+# Exposed here so it can be unit-tested without constructing the full servicer.
+# ---------------------------------------------------------------------------
+_PENDING_NORM = 50.0  # mirrors training/features.py::PENDING_NORM
+
+
+def build_occupancy_array(history: List[Dict], seq_len: int = 60) -> np.ndarray:
+    """Build a (seq_len, 4) float32 array from a node-history list.
+
+    Channel order matches training/features.py::_channels exactly:
+      ch0: cpu      – occupancy ratio [0,1]
+      ch1: memory   – occupancy ratio [0,1]
+      ch2: gpu      – occupancy ratio [0,1]
+      ch3: pending  – min(pending / 50.0, 1.0)
+
+    If len(history) < seq_len the output is front-padded with zeros.
+    """
+    arr = np.array(
+        [
+            [
+                h.get('cpu', 0.5),
+                h.get('memory', 0.5),
+                h.get('gpu', 0.0),
+                min(h.get('pending', 0) / _PENDING_NORM, 1.0),
+            ]
+            for h in history
+        ],
+        dtype=np.float32,
+    )  # (T, 4)
+
+    T = arr.shape[0]
+    if T >= seq_len:
+        return arr[-seq_len:]
+
+    pad = np.zeros((seq_len - T, 4), dtype=np.float32)
+    return np.concatenate([pad, arr], axis=0)  # (seq_len, 4)
+
 
 class ClusterStateManager:
     """실시간 클러스터 상태 관리"""
@@ -441,13 +479,14 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
                 return self._create_simulated_forecast_response(node_name, horizons, current_state)
 
             # 히스토리 데이터를 numpy 배열로 변환
-            history_array = self._history_to_array(history[-60:])  # 최근 60분
-
             # 예측 수행
             with self.model_lock:
                 if self.use_attention:
+                    # 4-channel occupancy array (train==serve)
+                    history_array = self._history_to_occupancy_array(history, seq_len=60)
                     predictions = self.attention_model.predict(sequence=history_array)
                 else:
+                    history_array = self._history_to_array(history[-60:])  # 최근 60분
                     predictions = self.basic_model.predict(
                         sequence=history_array,
                         horizons=horizons
@@ -490,11 +529,13 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
                 if len(history) < self.min_history_for_prediction:
                     continue
 
-                history_array = self._history_to_array(history[-60:])
                 with self.model_lock:
                     if self.use_attention:
+                        # 4-channel occupancy array (train==serve)
+                        history_array = self._history_to_occupancy_array(history, seq_len=60)
                         predictions = self.attention_model.predict(sequence=history_array)
                     else:
+                        history_array = self._history_to_array(history[-60:])
                         predictions = self.basic_model.predict(sequence=history_array, horizons=horizons)
 
                 if include_breakdown:
@@ -563,11 +604,13 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
                 history = self.node_history.get(node_name, [])
 
             if len(history) >= self.min_history_for_prediction:
-                history_array = self._history_to_array(history[-60:])
                 with self.model_lock:
                     if self.use_attention:
+                        # 4-channel occupancy array (train==serve)
+                        history_array = self._history_to_occupancy_array(history, seq_len=60)
                         predictions = self.attention_model.predict(sequence=history_array)
                     else:
+                        history_array = self._history_to_array(history[-60:])
                         predictions = self.basic_model.predict(sequence=history_array)
             else:
                 # 히스토리 부족 시 현재 상태 기반 예측 시뮬레이션
@@ -795,31 +838,19 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
     # ============ Helper Methods ============
 
     def _history_to_array(self, history: List[Dict]) -> np.ndarray:
-        """히스토리 데이터를 numpy 배열로 변환"""
-        # LSTM-Attention은 12개 특성, 기본 LSTM은 4개
-        if self.use_attention:
-            return np.array([
-                [
-                    h.get('cpu', 0.5),
-                    h.get('memory', 0.5),
-                    h.get('net_in', 0),
-                    h.get('net_out', 0),
-                    h.get('available_cores', 4),
-                    h.get('load_average', 0.5),
-                    h.get('workload_phase', 0),
-                    h.get('storage_io', 0.3),
-                    h.get('total_iops', 1000),
-                    h.get('throughput', 100),
-                    h.get('cache_hit_ratio', 0.7),
-                    h.get('gpu', 0.0),
-                ]
-                for h in history
-            ], dtype=np.float32)
-        else:
-            return np.array([
-                [h['cpu'], h['memory'], h.get('gpu', 0), h.get('storage_io', 0)]
-                for h in history
-            ], dtype=np.float32)
+        """히스토리 데이터를 numpy 배열로 변환 (기본 LSTM용, 4채널)"""
+        return np.array([
+            [h['cpu'], h['memory'], h.get('gpu', 0), h.get('storage_io', 0)]
+            for h in history
+        ], dtype=np.float32)
+
+    def _history_to_occupancy_array(self, history: List[Dict], seq_len: int = 60) -> np.ndarray:
+        """LSTM-Attention 서빙용 4채널 점유율 시퀀스 빌더 (train==serve).
+
+        Delegates to the module-level ``build_occupancy_array`` so the logic
+        can be unit-tested without constructing the full servicer.
+        """
+        return build_occupancy_array(history, seq_len=seq_len)
 
     def _simulate_predictions_from_current(self, current_state: Dict) -> Dict[int, Dict]:
         """현재 상태 기반 예측 시뮬레이션"""
@@ -1090,7 +1121,7 @@ def serve(port: int = 50055, http_port: int = 8080,
           model_path: Optional[str] = None, policy_model_dir: Optional[str] = None):
     """gRPC 서버 시작 (HTTP REST API 포함)"""
     model_path = model_path or os.environ.get("MODEL_PATH", "/models/lstm_attention.pt")
-    policy_model_dir = policy_model_dir or os.environ.get("POLICY_MODEL_DIR", "/models")
+    policy_model_dir = policy_model_dir or os.environ.get("POLICY_MODEL_DIR", "/policy-models")
     if not PROTO_AVAILABLE:
         logger.error("Proto files not available. Cannot start gRPC server.")
         return
