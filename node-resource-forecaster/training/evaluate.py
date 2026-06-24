@@ -18,6 +18,22 @@ _HEAD_TO_DECISION_IDX = {  # map engine decision -> class index per head
 }
 
 
+def _head_verdict(model_f1: float, rule_f1: float, n_positive: int) -> str:
+    """Return an honest per-head evaluation verdict.
+
+    Returns ``"not_evaluable"`` when there are no positive examples in the
+    held-out slice (both sides trivially score 1.0 accuracy / 0.0 F1, so the
+    comparison is meaningless).  Otherwise uses F1 as the primary metric.
+    """
+    if n_positive == 0:
+        return "not_evaluable"  # no positive examples in held-out slice
+    if model_f1 > rule_f1:
+        return "model_better"
+    if model_f1 == rule_f1:
+        return "tie"
+    return "rule_better"
+
+
 def lstm_rmse_vs_persistence(model, X, Y) -> dict:
     errs, perr = [], []
     for i in range(X.shape[0]):
@@ -61,11 +77,23 @@ def lightgbm_vs_threshold(trained_engine, replay, lstm_model, seq_len: int = 60)
         y_model = _engine_decision_class(trained_engine, replay, lstm_model, seq_len, head)[:n]
         y_rule = _engine_decision_class(rule_engine, replay, lstm_model, seq_len, head)[:n]
         avg = "macro" if head == "node_health" else "binary"
+        model_f1 = float(f1_score(y, y_model, average=avg, zero_division=0))
+        rule_f1 = float(f1_score(y, y_rule, average=avg, zero_division=0))
+        # For binary heads: positive = class 1.
+        # For node_health (multiclass): positive = STRESSED or CRITICAL (non-NORMAL, i.e. != 0).
+        n_positive = int((y != 0).sum())
+        verdict = _head_verdict(model_f1, rule_f1, n_positive)
         report[head] = {
             "model_acc": float(accuracy_score(y, y_model)),
             "rule_acc": float(accuracy_score(y, y_rule)),
-            "model_f1": float(f1_score(y, y_model, average=avg, zero_division=0)),
-            "beats_baseline": bool(accuracy_score(y, y_model) >= accuracy_score(y, y_rule)),
+            "model_f1": model_f1,
+            "rule_f1": rule_f1,
+            "n_positive": n_positive,
+            "n_test": n,
+            "verdict": verdict,
+            # beats_baseline is True ONLY when the model is genuinely better (F1-based).
+            # Ties and not_evaluable heads are NOT counted as wins.
+            "beats_baseline": verdict == "model_better",
         }
     return report
 
@@ -85,8 +113,24 @@ def write_report(report: dict, out_dir: str):
     if lg:
         lines += ["## LightGBM heads vs threshold baseline"]
         for head, m in lg.items():
-            lines.append(f"- {head}: acc={m['model_acc']:.3f} (rule {m['rule_acc']:.3f}), "
-                         f"f1={m['model_f1']:.3f}, beats={m['beats_baseline']}")
+            verdict = m.get("verdict", "unknown")
+            model_f1 = m.get("model_f1", float("nan"))
+            rule_f1 = m.get("rule_f1", float("nan"))
+            n_pos = m.get("n_positive", "?")
+            n_test = m.get("n_test", "?")
+            model_acc = m.get("model_acc", float("nan"))
+            rule_acc = m.get("rule_acc", float("nan"))
+            lines.append(
+                f"- {head}: **{verdict}** | "
+                f"model_f1={model_f1:.3f} vs rule_f1={rule_f1:.3f} | "
+                f"positives={n_pos}/{n_test} | "
+                f"acc=({model_acc:.3f} vs {rule_acc:.3f})"
+            )
+        lines.append("")
+        lines.append(
+            "> **Note:** heads with `not_evaluable` had no positive examples in the "
+            "held-out slice (sparse events) and are therefore not validated by this metric."
+        )
         lines.append("")
     lines += ["> Trained on the Alibaba GPU-2023 trace (allocation occupancy). "
               "Metrics are held-out on the trace; production correctness is not claimed."]
