@@ -1,0 +1,9 @@
+# Trained model artifacts (baked into image at build, never committed)
+artifacts/
+*.pt
+*_model.txt
+# Trace cache
+training/data/cache/
+__pycache__/
+*.pyc
+.venv/
