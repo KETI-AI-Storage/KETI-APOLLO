@@ -6,6 +6,7 @@ A pod is "running" on [scheduled_time, deletion_time). This is the same kind of
 signal the runtime forecaster sees (requests/capacity), so train==serve.
 """
 from dataclasses import dataclass
+import math
 import numpy as np
 import pandas as pd
 
@@ -27,7 +28,8 @@ def _cap(nodes_df):
 
 
 def replay_trace(nodes_df: pd.DataFrame, pods_df: pd.DataFrame,
-                 step_seconds: int = 60, gpu_capacity_per_unit: float = 1.0) -> ReplayResult:
+                 step_seconds: int = 60, gpu_capacity_per_unit: float = 1.0,
+                 max_steps: int = None) -> ReplayResult:
     cap = _cap(nodes_df)
 
     created = pods_df["creation_time"].fillna(0).astype(float).to_numpy()
@@ -40,7 +42,13 @@ def replay_trace(nodes_df: pd.DataFrame, pods_df: pd.DataFrame,
     if t_end <= t_start:
         t_end = t_start + step_seconds
 
-    times = list(range(t_start, t_end + 1, step_seconds))
+    effective_step = step_seconds
+    if max_steps and max_steps > 1:
+        span = t_end - t_start
+        needed = max(step_seconds, math.ceil(span / (max_steps - 1)))
+        effective_step = needed
+
+    times = list(range(t_start, t_end + 1, effective_step))
     n = len(times)
     occ = {k: np.zeros(n, dtype=np.float64) for k in ("cpu", "memory", "gpu")}
     pending = np.zeros(n, dtype=np.int64)
@@ -53,7 +61,7 @@ def replay_trace(nodes_df: pd.DataFrame, pods_df: pd.DataFrame,
     for i, t in enumerate(times):
         running = (~np.isnan(scheduled)) & (scheduled <= t) & (np.isnan(deleted) | (deleted > t))
         is_pending = (created <= t) & (np.isnan(scheduled) | (scheduled > t))
-        just_admitted = (~np.isnan(scheduled)) & (scheduled > t - step_seconds) & (scheduled <= t)
+        just_admitted = (~np.isnan(scheduled)) & (scheduled > t - effective_step) & (scheduled <= t)
 
         occ["cpu"][i] = min(cpu_req[running].sum() / cap["cpu"], 1.0)
         occ["memory"][i] = min(mem_req[running].sum() / cap["memory"], 1.0)

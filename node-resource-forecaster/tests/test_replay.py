@@ -90,6 +90,31 @@ def test_nan_deletion_time_runs_forever():
         )
 
 
+def test_max_steps_caps_series_length():
+    """max_steps=100 on a span of 600000s (10001 uncapped steps) must produce <= 100 steps,
+    and all arrays must have the same length as times."""
+    nodes = _nodes()
+    pods = pd.DataFrame([
+        {"cpu_milli": 500, "memory_mib": 1000, "num_gpu": 1,
+         "creation_time": 0, "scheduled_time": 60, "deletion_time": 600000},
+    ])
+    r = replay_trace(nodes, pods, step_seconds=60, max_steps=100)
+    assert len(r.times) <= 100, f"Expected <= 100 steps, got {len(r.times)}"
+    assert len(r.occupancy["cpu"]) == len(r.times)
+    assert len(r.occupancy["memory"]) == len(r.times)
+    assert len(r.occupancy["gpu"]) == len(r.times)
+    assert len(r.queue_pending) == len(r.times)
+    assert len(r.queue_admitted) == len(r.times)
+
+
+def test_max_steps_none_unchanged():
+    """max_steps=None (default) must produce identical results to not passing max_steps."""
+    a = replay_trace(_nodes(), _pods(), step_seconds=60)
+    b = replay_trace(_nodes(), _pods(), step_seconds=60, max_steps=None)
+    assert a.times == b.times
+    assert np.array_equal(a.occupancy["cpu"], b.occupancy["cpu"])
+
+
 def test_step_boundary_times_and_half_open_interval():
     """Using the single-pod fixture (cpu 500/1000, scheduled@60, deleted@180):
     - times must be exactly [0, 60, 120, 180]

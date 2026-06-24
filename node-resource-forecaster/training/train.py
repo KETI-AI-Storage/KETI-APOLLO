@@ -16,7 +16,8 @@ from training.train_lightgbm import train_lightgbm
 from training.evaluate import lstm_rmse_vs_persistence, lightgbm_vs_threshold, write_report
 
 
-def run_training(out_dir, cache_dir, sample_pods=None, lstm_epochs=10, seed=0, replay=None):
+def run_training(out_dir, cache_dir, sample_pods=None, lstm_epochs=10, seed=0, replay=None,
+                 max_steps=3000):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -24,7 +25,7 @@ def run_training(out_dir, cache_dir, sample_pods=None, lstm_epochs=10, seed=0, r
         nodes_df, pods_df = load_trace(cache_dir)
         if sample_pods:
             pods_df = pods_df.sample(n=min(sample_pods, len(pods_df)), random_state=seed)
-        replay = replay_trace(nodes_df, pods_df, step_seconds=60)
+        replay = replay_trace(nodes_df, pods_df, step_seconds=60, max_steps=max_steps)
 
     X, Y = build_lstm_sequences(replay, seq_len=60)
     if X.shape[0] == 0:
@@ -50,9 +51,10 @@ def main():
     ap.add_argument("--sample", type=int, default=None)
     ap.add_argument("--epochs", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--max-steps", type=int, default=3000)
     args = ap.parse_args()
     rep = run_training(args.out, args.cache, sample_pods=args.sample,
-                       lstm_epochs=args.epochs, seed=args.seed)
+                       lstm_epochs=args.epochs, seed=args.seed, max_steps=args.max_steps)
     print(rep["lightgbm"])
 
 
