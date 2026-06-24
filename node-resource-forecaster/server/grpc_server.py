@@ -331,10 +331,11 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
         # ============ 모델 초기화 ============
         # Primary: LSTM-Attention (발표자료 구현)
         if HAS_LSTM_ATTENTION:
-            self.attention_config = LSTMAttentionConfig()
+            from models.forecaster_config import make_occupancy_forecaster_config
+            self.attention_config = make_occupancy_forecaster_config()
             self.attention_model, self.attention_trainer = create_lstm_attention_forecaster(self.attention_config)
             self.use_attention = True
-            logger.info("Using LSTM-Attention model (발표자료 구현)")
+            logger.info("Using LSTM-Attention model (allocation-occupancy config)")
         else:
             self.use_attention = False
 
@@ -367,6 +368,11 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
             except Exception as e:
                 logger.warning(f"Failed to load model: {e}, using random initialization")
 
+        from server.artifact_status import artifact_status
+        self.artifacts = artifact_status(model_path, policy_model_dir)
+        logger.info("[apollo-ml] %s", self.artifacts["summary"])
+        self.model_ready = self.artifacts["lstm_loaded"]
+
         # 노드별 히스토리 데이터 저장
         self.node_history: Dict[str, List[Dict]] = defaultdict(list)
         self.history_lock = threading.Lock()
@@ -379,7 +385,6 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
         self.prediction_count = 0
         self.policy_decision_count = 0
         self.last_training_time = None
-        self.model_ready = False
 
         # Training synchronization
         self.training_in_progress = False
@@ -1078,8 +1083,11 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
         threading.Thread(target=train_background, daemon=True).start()
 
 
-def serve(port: int = 50055, http_port: int = 8080, model_path: Optional[str] = None, policy_model_dir: Optional[str] = None):
+def serve(port: int = 50055, http_port: int = 8080,
+          model_path: Optional[str] = None, policy_model_dir: Optional[str] = None):
     """gRPC 서버 시작 (HTTP REST API 포함)"""
+    model_path = model_path or os.environ.get("MODEL_PATH", "/models/lstm_attention.pt")
+    policy_model_dir = policy_model_dir or os.environ.get("POLICY_MODEL_DIR", "/models")
     if not PROTO_AVAILABLE:
         logger.error("Proto files not available. Cannot start gRPC server.")
         return
