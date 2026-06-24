@@ -184,6 +184,24 @@ class ClusterStateManager:
             self._refresh_cluster_state()
             self._last_refresh = now
 
+    def get_pending_pods_count(self) -> int:
+        """Return the cluster-wide count of Pending pods (raw int).
+
+        This is a cluster-wide figure (Pending pods have no node assignment),
+        so the same value is used for every node.  Returns 0 when the K8s API
+        is unavailable.
+        """
+        if not self.core_api:
+            return 0
+        try:
+            pods = self.core_api.list_pod_for_all_namespaces(
+                field_selector='status.phase=Pending'
+            )
+            return len(pods.items)
+        except Exception as e:
+            logger.debug(f"[ClusterState] pending pods fetch failed: {e}")
+            return 0
+
     def _refresh_cluster_state(self):
         """클러스터 상태 갱신"""
         if not self.core_api:
@@ -192,6 +210,9 @@ class ClusterStateManager:
         try:
             nodes = self.core_api.list_node()
             pods = self.core_api.list_pod_for_all_namespaces(field_selector='status.phase=Running')
+
+            # cluster-wide pending count (Pending pods have no node assignment)
+            pending_count = self.get_pending_pods_count()
 
             # 노드별 Pod 리소스 사용량 집계
             node_pod_resources = defaultdict(lambda: {'cpu_requests': 0, 'mem_requests': 0})
@@ -241,7 +262,7 @@ class ClusterStateManager:
                         'memory_util': min(mem_util, 1.0),
                         'gpu_util': gpu_util,
                         'storage_io_util': 0.0,  # scope collector이 담당 (ClusterInsight 경유)
-                        'pending_pods': 0,
+                        'pending_pods': pending_count,  # cluster-wide; same for every node
                         'node_type': node_type,
                         'cpu_capacity': cpu_capacity,
                         'memory_capacity': mem_capacity,
@@ -616,11 +637,16 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
                 # 히스토리 부족 시 현재 상태 기반 예측 시뮬레이션
                 predictions = self._simulate_predictions_from_current(current_state)
 
+            # pending_pods: use cluster_state value (populated from K8s in
+            # _refresh_cluster_state); raw int, not normalised here (training used raw)
+            pending_pods = current_state.get('pending_pods', 0)
+            current_state['pending_pods'] = pending_pods  # ensure key present
+
             # 노드 추가 정보
             node_info = {
                 'node_name': node_name,
                 'node_type': current_state.get('node_type', 'compute'),
-                'queue_status': {'pending': 0, 'admitted': 0}
+                'queue_status': {'pending': pending_pods, 'admitted': 0}
             }
 
             # Multi-LightGBM 정책 결정
@@ -698,6 +724,9 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
             )
 
         try:
+            # Fetch pending count once per batch (cluster-wide raw int, same as training)
+            pending_now = self.cluster_state.get_pending_pods_count()
+
             with self.history_lock:
                 for snapshot in snapshots:
                     self.node_history[node_name].append({
@@ -705,7 +734,8 @@ class NodeResourceForecasterServicer(forecaster_pb2_grpc.NodeResourceForecasterS
                         'cpu': snapshot.cpu_utilization,
                         'memory': snapshot.memory_utilization,
                         'gpu': snapshot.gpu_utilization,
-                        'storage_io': snapshot.storage_io_utilization
+                        'storage_io': snapshot.storage_io_utilization,
+                        'pending': pending_now,  # raw int; LSTM channel normalises via /50
                     })
 
                 # 히스토리 크기 제한

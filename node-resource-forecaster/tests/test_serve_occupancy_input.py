@@ -5,6 +5,9 @@ Verifies:
 1. build_occupancy_array returns the right shape and channel values.
 2. The output can be fed directly into a model built from
    make_occupancy_forecaster_config() without a shape error (train==serve).
+3. Channel-3 (pending) wiring: history entries written by SubmitHistoryData
+   now carry a 'pending' key (raw int); build_occupancy_array normalises it
+   via /50 exactly as training/features.py::_channels does.
 """
 import numpy as np
 import pytest
@@ -132,3 +135,27 @@ def test_model_predict_on_4ch_array_succeeds():
         for key, val in pred.items():
             v = val if np.isscalar(val) else np.asarray(val).ravel()[0]
             assert np.isfinite(v), f"horizon={horizon} key={key} val={val} is not finite"
+
+
+# ---------------------------------------------------------------------------
+# Pending-wiring regression tests
+# Mirrors the serve-path fix: SubmitHistoryData now stores 'pending' (raw int)
+# so that build_occupancy_array channel-3 is non-zero at serve time.
+# ---------------------------------------------------------------------------
+
+def test_pending_wiring_exact_value():
+    """A history entry with pending=30 must produce channel-3 == 30/50 == 0.6."""
+    builder = _import_builder()
+    history = [{'cpu': 0.5, 'memory': 0.5, 'gpu': 0.0, 'pending': 30} for _ in range(60)]
+    arr = builder(history, seq_len=60)
+    np.testing.assert_allclose(arr[:, 3], 0.6, rtol=1e-5,
+                               err_msg="pending=30 → ch3 should be 0.6 (30/50)")
+
+
+def test_pending_wiring_without_key_defaults_to_zero():
+    """History entries without 'pending' key (legacy entries) must default to 0."""
+    builder = _import_builder()
+    history = [{'cpu': 0.5, 'memory': 0.5, 'gpu': 0.0} for _ in range(60)]
+    arr = builder(history, seq_len=60)
+    np.testing.assert_allclose(arr[:, 3], 0.0, rtol=1e-5,
+                               err_msg="missing 'pending' key → ch3 must be 0.0 (graceful default)")
