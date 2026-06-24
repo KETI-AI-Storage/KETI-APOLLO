@@ -34,5 +34,25 @@ def test_current_state_contract():
     r = _replay(70)
     s = current_state_at(r, 10)
     assert set(s) >= {"cpu_util", "memory_util", "gpu_util", "pending_pods"}
+    # pending_pods must be raw int count, not normalized float
+    assert s["pending_pods"] == int(r.queue_pending[10])
     info = node_info_at(r, 10)
     assert info["queue_status"]["pending"] == int(r.queue_pending[10])
+
+
+def test_lstm_pending_channel_clips_at_one():
+    """Values > PENDING_NORM (50) must be clipped to 1.0 in the LSTM input channel."""
+    n = 200
+    t = list(range(0, n * 60, 60))
+    occ = {
+        "cpu": np.full(n, 0.5),
+        "memory": np.full(n, 0.5),
+        "gpu": np.full(n, 0.5),
+    }
+    r = ReplayResult(times=t, occupancy=occ,
+                     queue_pending=np.full(n, 100),   # all > PENDING_NORM=50
+                     queue_admitted=np.ones(n, dtype=int))
+    X, _ = build_lstm_sequences(r, seq_len=60)
+    assert X.shape[0] > 0, "expected at least one sequence"
+    # channel 3 is pending, every value should be clipped to 1.0
+    assert (X[:, :, 3] == 1.0).all()

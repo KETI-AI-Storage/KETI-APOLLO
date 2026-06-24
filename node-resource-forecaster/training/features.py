@@ -39,7 +39,7 @@ def current_state_at(replay, idx: int) -> dict:
         "cpu_util": float(replay.occupancy["cpu"][idx]),
         "memory_util": float(replay.occupancy["memory"][idx]),
         "gpu_util": float(replay.occupancy["gpu"][idx]),
-        "pending_pods": float(min(replay.queue_pending[idx] / PENDING_NORM, 1.0)),
+        "pending_pods": int(replay.queue_pending[idx]),
     }
 
 
