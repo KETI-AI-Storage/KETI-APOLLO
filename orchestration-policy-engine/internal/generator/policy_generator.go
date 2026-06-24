@@ -308,6 +308,13 @@ func (g *PolicyGenerator) analyzeAndCreatePolicy(ctx context.Context, nodeName s
 // argo workflow-controller 같은 플랫폼/인프라 컨트롤러는 distroless 이미지라 shell이 없어 exec이 영원히 실패한다.
 // 따라서 인프라 네임스페이스·컨트롤러/오퍼레이터성 Pod·distroless로 추정되는 이미지는 대상에서 제외한다.
 func migrationUnsuitableReason(pod *corev1.Pod) string {
+	// 이미 마이그레이션 산출물(orchestrator가 만든 optimized pod)인 Pod는 재마이그 금지.
+	// 재마이그하면 orchestrator가 checkpoint-volume을 중복 추가해 optimized pod 생성이
+	// "Duplicate value: checkpoint-volume"으로 실패한다. (E2E 하네스가 잡은 버그)
+	if pod.Labels["migration.ai-storage/job"] == "true" {
+		return "already a migration product (migration.ai-storage/job=true)"
+	}
+
 	// 플랫폼/인프라 네임스페이스(kube-* 는 호출부에서 이미 제외)
 	switch pod.Namespace {
 	case "argo", "argocd", "monitoring", "apollo", "keti":
