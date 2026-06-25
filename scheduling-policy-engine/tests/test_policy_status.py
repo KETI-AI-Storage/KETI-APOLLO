@@ -27,7 +27,7 @@ def test_online_rl_disabled_by_default():
 
 def test_online_rl_enabled_for_truthy():
     for v in ("1", "true", "TRUE", "yes", "On"):
-        assert online_rl_enabled({"APOLLO_PPO_ONLINE_RL": v}) is True
+        assert online_rl_enabled({"APOLLO_PPO_ONLINE_RL": v}) is True, v
 
 
 def test_policy_status_loaded_is_honest_and_frozen():
@@ -40,3 +40,14 @@ def test_policy_status_loaded_is_honest_and_frozen():
 def test_policy_status_not_loaded_is_loud():
     s = policy_status(model_loaded=False, online_rl=False)
     assert "FELL BACK TO RANDOM" in s
+
+
+def test_policy_status_online_rl_on_when_enabled():
+    s = policy_status(model_loaded=True, online_rl=True)
+    assert "online-RL=ON" in s
+    assert "online-RL=frozen" not in s
+
+
+def test_resolve_model_path_empty_arg_falls_through():
+    assert resolve_model_path("", {"MODEL_PATH": "/env.pt"}) == "/env.pt"
+    assert resolve_model_path("", {}) == DEFAULT_MODEL_PATH
