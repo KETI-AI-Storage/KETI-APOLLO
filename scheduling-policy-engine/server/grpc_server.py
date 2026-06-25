@@ -45,6 +45,7 @@ except ImportError:
     forecaster_pb2_grpc = None
 
 from models.ppo import SchedulingPolicyPPO, PPOConfig, PPOTrainer, calculate_reward
+from server.policy_status import resolve_model_path, online_rl_enabled, policy_status
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -458,13 +459,22 @@ class SchedulingPolicyServicer(apollo_pb2_grpc.SchedulingPolicyServiceServicer):
                 pass
         self.core_api = client.CoreV1Api()
 
-        # 모델 로드
+        # 모델 로드 (실패/부재 시 loud 폴백 — 배포 검증에서 즉시 포착)
+        self.model_loaded = False
         if model_path and os.path.exists(model_path):
             try:
                 self.trainer.load(model_path)
+                self.model_loaded = True
                 logger.info(f"Model loaded from {model_path}")
             except Exception as e:
-                logger.warning(f"Failed to load model: {e}, using random initialization")
+                logger.error(f"Failed to load model from {model_path}: {e}")
+        else:
+            logger.error(f"Model path not found: {model_path}")
+
+        # 온라인 RL은 기본 freeze (부실 clip 수식 + 희소/미신뢰 reward).
+        self.online_rl = online_rl_enabled()
+        status = policy_status(self.model_loaded, self.online_rl)
+        (logger.info if self.model_loaded else logger.warning)(status)
 
         # 정책 캐시 (피드백용)
         self.policy_cache: Dict[str, Dict] = {}
@@ -668,25 +678,27 @@ class SchedulingPolicyServicer(apollo_pb2_grpc.SchedulingPolicyServiceServicer):
                     metrics_after=metrics_after,
                 )
 
-                # Experience 저장
-                self.trainer.store_transition(
-                    state=cached['state'],
-                    action=cached['action'],
-                    reward=reward,
-                    value=cached['value'],
-                    log_prob=cached['log_prob'],
-                    done=True
-                )
-
-                self.total_reward += reward
-                self.training_episodes += 1
-
-                # 주기적 학습 (32 에피소드마다)
-                if self.training_episodes % 32 == 0:
-                    metrics = self.trainer.update()
-                    logger.info(f"[PolicyEngine] Training update: {metrics}")
-
-                logger.info(f"[PolicyEngine] Feedback processed: reward={reward:.4f}")
+                # 온라인 RL: APOLLO_PPO_ONLINE_RL로 게이트, 기본 freeze.
+                # 사유: clip 수식 부실 + 희소/미신뢰 reward → 정직 reward 확보 전까지 동결.
+                if self.online_rl:
+                    self.trainer.store_transition(
+                        state=cached['state'],
+                        action=cached['action'],
+                        reward=reward,
+                        value=cached['value'],
+                        log_prob=cached['log_prob'],
+                        done=True
+                    )
+                    self.total_reward += reward
+                    self.training_episodes += 1
+                    if self.training_episodes % 32 == 0:
+                        metrics = self.trainer.update()
+                        logger.info(f"[PolicyEngine] Training update: {metrics}")
+                    logger.info(f"[PolicyEngine] Feedback processed: reward={reward:.4f}")
+                else:
+                    logger.debug(
+                        f"[PolicyEngine] Feedback received (online-RL frozen): reward={reward:.4f}"
+                    )
 
                 return apollo_pb2.ReportResponse(
                     success=True,
@@ -1387,6 +1399,7 @@ class SchedulingPolicyServicer(apollo_pb2_grpc.SchedulingPolicyServiceServicer):
 
 def serve(port: int = 50054, model_path: Optional[str] = None):
     """gRPC 서버 시작"""
+    model_path = resolve_model_path(model_path)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
 
     servicer = SchedulingPolicyServicer(model_path)
