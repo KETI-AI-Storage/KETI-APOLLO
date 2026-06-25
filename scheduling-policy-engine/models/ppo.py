@@ -547,8 +547,8 @@ class PPOTrainer:
         }, path)
 
     def load(self, path: str):
-        """모델 로드"""
-        checkpoint = torch.load(path)
+        """모델 로드 (trusted/local artifact -> weights_only=False for torch>=2.6)."""
+        checkpoint = torch.load(path, weights_only=False)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
