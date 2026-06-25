@@ -97,12 +97,12 @@ def forecast_node(node_name: str):
             })
 
         # Get prediction from model (LSTM-Attention or basic LSTM)
-        history_array = servicer._history_to_array(history[-60:])
-
         with servicer.model_lock:
             if getattr(servicer, 'use_attention', False):
+                history_array = servicer._history_to_occupancy_array(history, seq_len=60)
                 predictions = servicer.attention_model.predict(sequence=history_array)
             else:
+                history_array = servicer._history_to_array(history[-60:])
                 predictions = servicer.basic_model.predict(sequence=history_array, horizons=horizons)
 
         servicer.prediction_count += 1
@@ -174,11 +174,12 @@ def forecast_cluster():
             if len(history) < servicer.min_history_for_prediction:
                 continue
 
-            history_array = servicer._history_to_array(history[-60:])
             with servicer.model_lock:
                 if getattr(servicer, 'use_attention', False):
+                    history_array = servicer._history_to_occupancy_array(history, seq_len=60)
                     predictions = servicer.attention_model.predict(sequence=history_array)
                 else:
+                    history_array = servicer._history_to_array(history[-60:])
                     predictions = servicer.basic_model.predict(sequence=history_array, horizons=horizons)
 
             if include_nodes:
@@ -274,11 +275,12 @@ def get_orchestration_policy(node_name: str):
             history = servicer.node_history.get(node_name, [])
 
         if len(history) >= servicer.min_history_for_prediction:
-            history_array = servicer._history_to_array(history[-60:])
             with servicer.model_lock:
                 if getattr(servicer, 'use_attention', False):
+                    history_array = servicer._history_to_occupancy_array(history, seq_len=60)
                     predictions = servicer.attention_model.predict(sequence=history_array)
                 else:
+                    history_array = servicer._history_to_array(history[-60:])
                     predictions = servicer.basic_model.predict(sequence=history_array)
         else:
             # Simulate predictions from current state
@@ -356,11 +358,12 @@ def get_policy_recommendations(node_name: str):
             history = servicer.node_history.get(node_name, [])
 
         if len(history) >= servicer.min_history_for_prediction:
-            history_array = servicer._history_to_array(history[-60:])
             with servicer.model_lock:
                 if getattr(servicer, 'use_attention', False):
+                    history_array = servicer._history_to_occupancy_array(history, seq_len=60)
                     predictions = servicer.attention_model.predict(sequence=history_array)
                 else:
+                    history_array = servicer._history_to_array(history[-60:])
                     predictions = servicer.basic_model.predict(sequence=history_array)
         else:
             predictions = servicer._simulate_predictions_from_current(current_state)
@@ -466,11 +469,12 @@ def _build_lstm_threshold_recommendations(node_name: str) -> List[Dict[str, Any]
         history = servicer.node_history.get(node_name, [])
 
     if len(history) >= servicer.min_history_for_prediction:
-        history_array = servicer._history_to_array(history[-60:])
         with servicer.model_lock:
             if getattr(servicer, 'use_attention', False):
+                history_array = servicer._history_to_occupancy_array(history, seq_len=60)
                 predictions = servicer.attention_model.predict(sequence=history_array)
             else:
+                history_array = servicer._history_to_array(history[-60:])
                 predictions = servicer.basic_model.predict(sequence=history_array)
     else:
         predictions = servicer._simulate_predictions_from_current(current_state)
