@@ -1,42 +1,40 @@
 # Scheduling Policy Engine Dockerfile
-# PPO RL 기반 스케줄링 정책 엔진 (CPU-only 경량화)
+# Multi-stage: build the analytic uniform-init PPO artifact, then runtime.
+# PPO 정책 엔진 (CPU-only). 초기모델 = 결정적 균등 정책(랜덤 제거), 온라인 RL freeze.
 
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+# ---------- Stage 1: build the uniform-init artifact ----------
+FROM python:3.11-slim AS trainer
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-# Install PyTorch CPU-only version separately (약 200MB)
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir "numpy>=1.24.0"
+COPY models/ ./models/
+COPY training/ ./training/
+RUN python -m training.init_model --out /artifacts/ppo_scheduler.pt --seed 0 \
+ && ls -la /artifacts
 
-# Copy and install other requirements
+# ---------- Stage 2: runtime ----------
+FROM python:3.11-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy proto files and generate Python stubs
-# forecaster.proto: build-images.sh에서 node-resource-forecaster/proto/forecaster.proto 복사 후 빌드
 COPY proto/ ./proto/
 RUN python -m grpc_tools.protoc -I./proto --python_out=. --grpc_python_out=. ./proto/apollo.proto \
     && python -m grpc_tools.protoc -I./proto --python_out=. --grpc_python_out=. ./proto/forecaster.proto
-
-# Copy source code
 COPY models/ ./models/
 COPY server/ ./server/
-
-# Create models directory for checkpoints
-RUN mkdir -p /models
-
-# Environment variables
+COPY training/ ./training/
+RUN mkdir -p /models /policy-models
+# Bake the artifact to the path the server loads from (NOT /models — PVC shadows it).
+COPY --from=trainer /artifacts/ppo_scheduler.pt /policy-models/ppo_scheduler.pt
 ENV PYTHONUNBUFFERED=1
 ENV GRPC_PORT=50054
-ENV MODEL_PATH=/models/ppo_scheduler.pt
+ENV MODEL_PATH=/policy-models/ppo_scheduler.pt
 ENV LOG_LEVEL=INFO
-
 EXPOSE 50054
 EXPOSE 9090
-
 CMD ["python", "server/grpc_server.py", "--port", "50054"]
